@@ -14,5 +14,6 @@ Many python dependencies are utilized and can be installed using the requirement
 pip install -r requirements.txt
 ```
 ## Usage
-After installation and dependencies, navigate to the directory and isue "python3 VforMSF.py" from the command line.
-Begin with the "vhelp" command and go from there.
+After installation, navigate to the directory, install the dependencies before issuing "python3 VforMSF.py" from the command line.
+Meant to be used in kali linux or similar linux based OS.
+Utilize msfconsole as usual and enter the vhelp command to see extensions.
