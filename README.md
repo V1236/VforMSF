@@ -7,13 +7,12 @@ Additionally it utilizes Sublist3r/subrute from https://github.com/aboul3la/Subl
 ## Installation
 ```
 git clone https://github.com/V1236/VforMSF.git
-
+```
 ## Dependencies:
 Many python dependencies are utilized and can be installed using the requirements file:
 ```
 pip install -r requirements.txt
 ```
 ## Usage
-```
 After installation and dependencies, navigate to the directory and isue "python3 VforMSF.py" from the command line.
 Begin with the "vhelp" command and go from there.
