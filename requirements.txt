@@ -1,0 +1,12 @@
+scapy
+requests
+readline
+validators
+argparse
+tqdm
+phonenumbers
+folium
+python-geoip-geolite2
+opencage
+colorama
+pexpect
