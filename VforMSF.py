@@ -45,40 +45,7 @@ try:
     requests.packages.urllib3.disable_warnings()
 except:
     pass
-
-sessions = {}
-session_counter = 1
-terminal_size = shutil.get_terminal_size((80, 20))  # Default to 80x20 if unable to determine
-terminal_width = terminal_size.columns
-
-# Define default values for Metasploit parameters as variables
-default_payload = ""
-default_payloadfile = ""
-default_lport = ""
-default_lhost = ""
-default_rhosts = ""
-default_password_wordlist = ""
-default_user_wordlist = ""
-default_exploit_target = ""  # Specify the target for the exploit (if applicable)
-default_encoder = ""  # Specify an encoder to use (if payload encoding is needed)
-default_exit_on_session = ""  # Specify whether to exit when a session is created
-default_verbose = ""  # Enable detailed status output
-default_rport = ""  # Remote port to connect to (if different from default)
-default_evasion = ""  # Specify an evasion technique (if needed)
-default_nop = ""  # Specify a NOP generator (if needed)
-default_badchars = ""  # Specify bad characters to avoid (if needed)
-default_iterations = ""  # Number of iterations for certain encoders or nops
-default_timeout = ""  # Timeout for the exploit attempt
-default_http_user_agent = ""  # User-Agent for HTTP-based exploits
-default_ssl = ""   # Enable SSL/TLS for the connection
-default_setg = {}  # Global settings that apply to all modules
-default_advanced_options = {}  # Advanced options for fine-tuning the exploit
-
-# Initialize a ConfigParser object
-config = configparser.ConfigParser()
-
-import random  # Make sure to import the random module
-
+    
 def banner():
     """
     Prints one of five ASCII art banners based on a randomly generated number.
@@ -122,6 +89,35 @@ Yb    dP  d8b            8b   d8 .d88b. 8888
         
     # Coded By Caleb McDaniels
 """)
+
+sessions = {}
+session_counter = 1
+terminal_size = shutil.get_terminal_size((80, 20))  # Default to 80x20 if unable to determine
+terminal_width = terminal_size.columns
+
+# Initialize a ConfigParser object
+config = configparser.ConfigParser()
+
+# Define default values for Metasploit parameters as variables
+default_payload = ""
+default_payloadfile = ""
+default_lport = ""
+default_lhost = ""
+default_rhosts = ""
+default_password_wordlist = ""
+default_user_wordlist = ""
+default_exploit_target = ""
+default_encoder = ""
+default_exit_on_session = ""
+default_verbose = ""
+default_rport = ""
+default_evasion = ""
+default_nop = ""
+default_badchars = ""
+default_iterations = ""
+default_timeout = ""
+default_http_user_agent = ""
+default_ssl = ""
 
 banner()
 
@@ -173,8 +169,25 @@ def load_metasploit_params():
         config.read('metasploit_config.ini')
         default_payload = config.get('Metasploit', 'payload', fallback=default_payload)
         default_payloadfile = config.get('Metasploit', 'payloadfile', fallback=default_payloadfile)
+        default_lport = config.get('Metasploit', 'lport', fallback=default_lport)
+        default_lhost = config.get('Metasploit', 'lhost', fallback=default_lhost)
+        default_rhosts = config.get('Metasploit', 'rhosts', fallback=default_rhosts)
+        default_password_wordlist = config.get('Metasploit', 'password_wordlist', fallback=default_password_wordlist)
+        default_user_wordlist = config.get('Metasploit', 'user_wordlist', fallback=default_user_wordlist)
+        default_exploit_target = config.get('Metasploit', 'exploit_target', fallback=default_exploit_target)
+        default_encoder = config.get('Metasploit', 'encoder', fallback=default_encoder)
+        default_exit_on_session = config.getboolean('Metasploit', 'exit_on_session', fallback=default_exit_on_session)
+        default_verbose = config.getboolean('Metasploit', 'verbose', fallback=default_verbose)
+        default_rport = config.get('Metasploit', 'rport', fallback=default_rport)
+        default_evasion = config.get('Metasploit', 'evasion', fallback=default_evasion)
+        default_nop = config.get('Metasploit', 'nop', fallback=default_nop)
+        default_badchars = config.get('Metasploit', 'badchars', fallback=default_badchars)
+        default_iterations = config.getint('Metasploit', 'iterations', fallback=default_iterations)
+        default_timeout = config.getint('Metasploit', 'timeout', fallback=default_timeout)
+        default_http_user_agent = config.get('Metasploit', 'http_user_agent', fallback=default_http_user_agent)
+        default_ssl = config.getboolean('Metasploit', 'ssl', fallback=default_ssl)
+        
         print(f"[+] metasploit_config.ini loaded")
-        # Load other parameters in a similar manner
     except configparser.Error as e:
         print(f"Error loading configuration: {e}")
         
@@ -200,8 +213,6 @@ def save_metasploit_params():
         'timeout': str(default_timeout),
         'http_user_agent': default_http_user_agent,
         'ssl': str(default_ssl),
-        'setg': str(default_setg),
-        'advanced_options': str(default_advanced_options)
     }
 
     with open('metasploit_config.ini', 'w') as configfile:
@@ -231,8 +242,6 @@ def print_current_defaults():
     print(f"default_timeout: {default_timeout}")
     print(f"default_http_user_agent: {default_http_user_agent}")
     print(f"default_ssl: {default_ssl}")
-    print(f"default_setg: {default_setg}")
-    print(f"default_advanced_options: {default_advanced_options}")
 
 # Function to update Metasploit parameters with user input
 def update_metasploit_params():
@@ -264,8 +273,6 @@ def update_metasploit_params():
         'timeout': default_timeout,
         'http_user_agent': default_http_user_agent,
         'ssl': default_ssl,
-        'setg': default_setg,
-        'advanced_options': default_advanced_options
     }
 
     # Iterate through each parameter to update the values
@@ -295,13 +302,11 @@ def update_metasploit_params():
     default_timeout = default_values['timeout']
     default_http_user_agent = default_values['http_user_agent']
     default_ssl = default_values['ssl']
-    default_setg = default_values['setg']
-    default_advanced_options = default_values['advanced_options']
     
     print()
     save_metasploit_params()
 
-def route(master, default_lhost):
+def route(master):
 
     # Check if the required agent file has been uploaded
     uploaded = input("Has the required agent file been uploaded? (y/N): ").strip().lower()
@@ -1291,7 +1296,7 @@ def strip_ansi_sequences(text):
     ansi_escape_pattern = re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]')
     return ansi_escape_pattern.sub('', text)
         
-def main(default_payload, default_lport, default_lhost, default_password_wordlist, default_user_wordlist, default_rhosts, default_payloadfile):
+def main():
     # Set up initial pseudoterminal and msfconsole process
     master, slave = pty.openpty()
     pid = os.fork()
@@ -1310,7 +1315,7 @@ def main(default_payload, default_lport, default_lhost, default_password_wordlis
         first_launch = True
         defaultset = False
         inmodule = False
-        modulepattern = r'\((.*?)\)'
+        modulepattern = r'\b(exploit|auxiliary|post|payload|encoder|nop|evasion)\((.*?)\)'
         ligoloup = False
         try:
             while True:
@@ -1345,18 +1350,19 @@ def main(default_payload, default_lport, default_lhost, default_password_wordlis
                         elif user_input.lower().startswith("use "):
                             os.write(master, user_input.encode())
                             os.write(master, f"show options\n".encode())
-
+                               
                         elif user_input.lower().startswith("set config"):
-                           if inmodule:
-                               match = re.search(modulepattern, output)
-                               module = match.group(1)
+                           match = re.search(modulepattern, output)
+                           if match:
+                               module_name = match.group(2)
                                os.write(master, f"back\n".encode())
                                send_metasploit_commands(master)
-                               os.write(master, f"use {module}\n".encode())
+                               os.write(master, f"use {module_name}\n".encode())
                                defaultset = True
                            else:
                                send_metasploit_commands(master)
                                defaultset = True
+
 
                         elif user_input.lower().startswith("update config"):
                             update_metasploit_params()
@@ -1409,7 +1415,7 @@ def main(default_payload, default_lport, default_lhost, default_password_wordlis
                             os.write(master, f"exploit\n".encode())
 
                         elif user_input.lower().startswith("help"):
-                            if not re.search(r"msf6", output): #for my reverse shell, comment out if it bothers you
+                            if not re.search(r"msf", output): #for my reverse shell, comment out if it bothers you
                                 os.write(master, b"shelp\n")
                             else:
                                 print("[-] Please specify *msfhelp* or *vhelp*")
@@ -1649,9 +1655,9 @@ def main(default_payload, default_lport, default_lhost, default_password_wordlis
                         elif user_input.lower().startswith("pivot"):
                             print("*Utilizes ligolo to set up a tunnel into internal network*")
                             print("[+] See https://github.com/Nicocha30/ligolo-ng for the required files and information\n")
-                            if not re.search(r"msf6", output):
+                            if not re.search(r"msf", output):
                                 try:
-                                    route(master, default_lhost)
+                                    route(master)
                                     ligoloup = True
                                 except Exception as e:
                                     print(f"[-] Error occurred: {e}")
@@ -1667,5 +1673,5 @@ def main(default_payload, default_lport, default_lhost, default_password_wordlis
 if __name__ == "__main__":
     # Execute initial commands to start services
     start_msf()
-    main(default_payload, default_lport, default_lhost, default_password_wordlist, default_user_wordlist, default_rhosts, default_payloadfile)
+    main()
 
