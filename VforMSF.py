@@ -474,54 +474,6 @@ def is_valid_network(network):
     
     return True
 
-def locate(phone_number):
-    # Clean the phone number
-    cleaned_phone_number = clean_phone_number(phone_number)
-
-    # Process the phone number
-    location = process_number(cleaned_phone_number)
-    if location:
-        latitude, longitude = get_approx_coordinates(location)
-
-def process_number(number):
-    try:
-        parsed_number = phonenumbers.parse(number)
-        print(f"[+] Attempting to track location of "
-              f"{phonenumbers.format_number(parsed_number, phonenumbers.PhoneNumberFormat.INTERNATIONAL)}.")
-        print(f"[+] Time Zone ID: {timezone.time_zones_for_number(parsed_number)}")
-
-        location = geocoder.description_for_number(parsed_number, "en")
-        if location:
-            print(f"[+] Region: {location}")
-        else:
-            print(f"[-] Region: Unknown")
-
-        service_provider = carrier.name_for_number(parsed_number, 'en')
-        if service_provider:
-            print(f"[+] Service Provider:  {service_provider}")
-
-        return location
-
-    except Exception as e:
-        print(f"[-] Error: {e}. Please specify a valid phone number (with country code) ")
-        return None
-
-def get_approx_coordinates(location):
-    try:
-        coder = OpenCageGeocode("6e50ad57f06b4222a8586a7125bdef50")  # IDGAF if someone uses my API key
-        results = coder.geocode(location)
-        latitude = results[0]['geometry']['lat']
-        longitude = results[0]['geometry']['lng']
-        print(f"[+] Latitude: {latitude}, Longitude: {longitude}")
-        return latitude, longitude
-
-    except Exception as e:
-        print(f"[-] Error: {e}. Could not get the location of this number. Please specify a valid phone number ")
-        return None, None
-
-def clean_phone_number(phone_number):
-    return ''.join(char for char in phone_number if char.isdigit() or char == '+')
-
 def send_file(filename):
     try:
         # Device's IP address
@@ -531,17 +483,13 @@ def send_file(filename):
         SEPARATOR = "<SEPARATOR>"
         BUFFER_SIZE = 4096
         # Create the server socket
-        # TCP socket
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        # Set a timeout for socket operations
         s.settimeout(10)  # connection should be instant so 10 seconds is fine
         # Set the socket option to allow reusing the address
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         # Bind the socket to our local address
         s.bind((SERVER_HOST, SERVER_PORT))
-        # Enable our server to accept connections
-        # 5 here is the number of unaccepted connections that
-        # the system will allow before refusing new connections
+
         s.listen(5)
         # Accept connection if there is any
         client_socket, address = s.accept()
@@ -576,24 +524,19 @@ def send_file(filename):
 
 def receive_file(filename):
     try:
-        # Device's IP address
         SERVER_HOST = "0.0.0.0"
         SERVER_PORT = 8080
         # Receive 4096 bytes each time
         SEPARATOR = "<SEPARATOR>"
         BUFFER_SIZE = 4096
-        # Create the server socket
-        # TCP socket
         s = socket.socket()
-        # Set a timeout for socket operations
+
         s.settimeout(10) #connection should be instant so 10 seconds is fine
         # Set the socket option to allow reusing the address
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         # Bind the socket to our local address
         s.bind((SERVER_HOST, SERVER_PORT))
-        # Enable our server to accept connections
-        # 5 here is the number of unaccepted connections that
-        # the system will allow before refusing new connections
+        
         s.listen(5)
         # Accept connection if there is any
         client_socket, address = s.accept()
@@ -1509,7 +1452,7 @@ def main():
 
                             print("**SELF COMMANDS:**")
                             print("  -vbanner *Displays our awesome banner*")
-                            print("  -vhelp *Display this list. More commands to come in future updates*")
+                            print("  -vhelp *Display this list.*")
                             print("  -exit *Ends the program*")
                             print("  -clear *clears the screen*")
                             print()
@@ -1517,7 +1460,6 @@ def main():
                             print("**UTILITY COMMANDS:**")
                             print("  -bash *Enters a bash terminal. The script is still running. Use exit to return*")
                             print("  -chmac *Changes your MAC address. (Needs Root)*")
-                            print("  -locate *full phone number* *sends a very approximate location for the provided phone number*")
                             print("  -generate *generates a reverse shell utilizing msfvenom*")
                             print()
 
@@ -1559,27 +1501,15 @@ def main():
                             print("  -set config *enters the default values into metasploit*")
                             print()
                             
-                        # If user enters the 'locate' command, geolocate a phone number
                         elif user_input.lower().startswith("clear "):
                             try:
                                 os.system('clear')
                             except Exception as e:
                                 print(f"[-] Error occurred during scan: {e}")
                                 
-                        # If user enters the 'locate' command, geolocate a phone number
                         elif user_input.lower().startswith("generate"):
                             try:
                                 generate_payload()
-                            except Exception as e:
-                                print(f"[-] Error occurred during scan: {e}")
-
-                        # If user enters the 'locate' command, geolocate a phone number
-                        elif user_input.lower().startswith("locate "):
-                            phone_number = user_input.split("locate ")[1]
-                            try:
-                                print("*sends a very approximate location for the provided phone number*")
-                                init()
-                                locate(f"+{phone_number}")
                             except Exception as e:
                                 print(f"[-] Error occurred during scan: {e}")
 
