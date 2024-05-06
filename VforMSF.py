@@ -27,12 +27,12 @@ import ctypes
 import dns.resolver
 import dns.rdatatype
 import tqdm
-import phonenumbers, sys, folium, os, argparse
+import phonenumbers, sys, os, argparse
 from colorama import init, Fore
 import phonenumbers
 from phonenumbers import geocoder, timezone, carrier
-from opencage.geocoder import OpenCageGeocode
-import folium
+#from opencage.geocoder import OpenCageGeocode
+#import folium
 import pty
 import signal
 import textwrap
