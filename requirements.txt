@@ -1,12 +1,41 @@
-scapy
+os
+subprocess
+shlex
+scapy.all as scapy
+socket
+time
+sys
+select
+threading
+subprocess
+re
+struct
+random
 requests
+urllib.parse
 readline
 validators
 argparse
+hashlib
+multiprocessing
+json
+from collections import Counter
+optparse
+signal
+uuid
+ctypes
+dns.resolver
+dns.rdatatype
 tqdm
+phonenumbers, sys, os, argparse
+from colorama import init, Fore
 phonenumbers
-folium
-python-geoip-geolite2
-opencage
-colorama
+from phonenumbers import geocoder, timezone, carrier
+#from opencage.geocoder import OpenCageGeocode
+#import folium
+pty
+signal
+textwrap
+shutil
 pexpect
+configparser
