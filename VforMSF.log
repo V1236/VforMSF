@@ -1,0 +1,108 @@
+Script started on 2025-02-10 02:44:49+00:00 [COMMAND="stdbuf -oL bash; /tmp/exit_script_11670.sh" TERM="xterm-256color" TTY="/dev/pts/0" COLUMNS="80" LINES="24"]
+[?2004h]0;kali@decyphertek: ~/VforMSF[;32m┌──([1;34mkali㉿decyphertek[;32m)-[[0;1m~/VforMSF[;32m]
+[;32m└─[1;34m$[0m subfinder http[K[K[K[K[K http://vulnweb.com[K[K[K[K[K[K[K[K[K[K[K[K[K[K[K[K[K[K-h
+[?2004lSubfinder is a subdomain discovery tool that discovers subdomains for websites by using passive online sources.
+
+Usage:
+  subfinder [flags]
+
+Flags:
+INPUT:
+   -d, -domain string[]  domains to find subdomains for
+   -dL, -list string     file containing list of domains for subdomain discovery
+
+SOURCE:
+   -s, -sources string[]           specific sources to use for discovery (-s crtsh,github). Use -ls to display all available sources.
+   -recursive                      use only sources that can handle subdomains recursively rather than both recursive and non-recursive sources
+   -all                            use all sources for enumeration (slow)
+   -es, -exclude-sources string[]  sources to exclude from enumeration (-es alienvault,zoomeyeapi)
+
+FILTER:
+   -m, -match string[]   subdomain or list of subdomain to match (file or comma separated)
+   -f, -filter string[]   subdomain or list of subdomain to filter (file or comma separated)
+
+RATE-LIMIT:
+   -rl, -rate-limit int      maximum number of http requests to send per second (global)
+   -rls, -rate-limits value  maximum number of http requests to send per second for providers in key=value format (-rls hackertarget=10/m) (default ["github=30/m", "fullhunt=60/m", "robtex=18446744073709551615/ms", "securitytrails=1/s", "shodan=1/s", "virustotal=4/m", "hackertarget=2/s", "waybackarchive=15/m", "whoisxmlapi=50/s", "securitytrails=2/s", "sitedossier=8/m", "netlas=1/s", "github=83/m", "hudsonrock=5/s"])
+   -t int                    number of concurrent goroutines for resolving (-active only) (default 10)
+
+UPDATE:
+   -up, -update                 update subfinder to latest version
+   -duc, -disable-update-check  disable automatic subfinder update check
+
+OUTPUT:
+   -o, -output string       file to write output to
+   -oJ, -json               write output in JSONL(ines) format
+   -oD, -output-dir string  directory to write output (-dL only)
+   -cs, -collect-sources    include all sources in the output (-json only)
+   -oI, -ip                 include host IP in output (-active only)
+
+CONFIGURATION:
+   -config string                flag config file (default "/home/kali/.config/subfinder/config.yaml")
+   -pc, -provider-config string  provider config file (default "/home/kali/.config/subfinder/provider-config.yaml")
+   -r string[]                   comma separated list of resolvers to use
+   -rL, -rlist string            file containing list of resolvers to use
+   -nW, -active                  display active subdomains only
+   -proxy string                 http proxy to use with subfinder
+   -ei, -exclude-ip              exclude IPs from the list of domains
+
+DEBUG:
+   -silent             show only subdomains in output
+   -version            show version of subfinder
+   -v                  show verbose output
+   -nc, -no-color      disable color in output
+   -ls, -list-sources  list all available sources
+   -stats              report source statistics
+
+OPTIMIZATION:
+   -timeout int   seconds to wait before timing out (default 30)
+   -max-time int  minutes to wait for enumeration results (default 10)
+
+
+[?2004h]0;kali@decyphertek: ~/VforMSF[;32m┌──([1;34mkali㉿decyphertek[;32m)-[[0;1m~/VforMSF[;32m]
+[;32m└─[1;34m$[0m [K[;32m└─[1;34m$[0m [K[;32m└─[1;34m$[0m [K[;32m└─[1;34m$[0m [K[;32m└─[1;34m$[0m [K[;32m└─[1;34m$[0m [K[;32m└─[1;34m$[0m [K[;32m└─[1;34m$[0m [K[;32m└─[1;34m$[0m [K[;32m└─[1;34m$[0m [K[;32m└─[1;34m$[0m [K[;32m└─[1;34m$[0m [K[;32m└─[1;34m$[0m [K[;32m└─[1;34m$[0m [K[;32m└─[1;34m$[0m [K[;32m└─[1;34m$[0m [K[;32m└─[1;34m$[0m [K[;32m└─[1;34m$[0m [K[;32m└─[1;34m$[0m [K[;32m└─[1;34m$[0m [K[;32m└─[1;34m$[0m [K[;32m└─[1;34m$[0m [K[;32m└─[1;34m$[0m [K[;32m└─[1;34m$[0m subfinder -h[C[C[C[C[8Pexitsubfinder -h[Kd http://vulnweb.com
+[?2004l
+               __    _____           __         
+   _______  __/ /_  / __(_)___  ____/ /__  _____
+  / ___/ / / / __ \/ /_/ / __ \/ __  / _ \/ ___/
+ (__  ) /_/ / /_/ / __/ / / / / /_/ /  __/ /    
+/____/\__,_/_.___/_/ /_/_/ /_/\__,_/\___/_/
+
+		projectdiscovery.io
+
+[[34mINF[0m] Current subfinder version v2.6.8 ([92mlatest[0m)
+[[34mINF[0m] Loading provider config from /home/kali/.config/subfinder/provider-config.yaml
+[[34mINF[0m] Enumerating subdomains for vulnweb.com
+www.vulnweb.com
+testaps.vulnweb.com
+antivirus1.vulnweb.com
+5cwww.vulnweb.com
+httptestaspnet.vulnweb.com
+edu-rost.ruwww.vulnweb.com
+www.testphp.vulnweb.com
+testhtml5.vulnweb.com
+test.php.vulnweb.com
+www.test.php.vulnweb.com
+restasp.vulnweb.com
+testaspnet.vulnweb.com
+rest.vulnweb.com
+odincovo.vulnweb.com
+virus.vulnweb.com
+edu-rost.rutestasp.vulnweb.com
+www.virus.vulnweb.com
+testap.vulnweb.com
+estphp.vulnweb.com
+viruswall.vulnweb.com
+ttestphp.vulnweb.com
+testphp.vulnweb.com
+testasp.vulnweb.com
+testaspx.vulnweb.com
+testapsnet.vulnweb.com
+www.testasp.vulnweb.com
+blogger.com.vulnweb.com
+tetphp.vulnweb.com
+test.vulnweb.com
+[[34mINF[0m] Found 29 subdomains for vulnweb.com in 31 seconds 66 milliseconds
+
+[?2004h]0;kali@decyphertek: ~/VforMSF[;32m┌──([1;34mkali㉿decyphertek[;32m)-[[0;1m~/VforMSF[;32m]
+[;32m└─[1;34m$[0m 

