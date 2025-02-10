@@ -3,7 +3,7 @@ Enhance and automate metasploit console with VforMSF. This script acts an an add
 
 Assistant.py comes included. Run it in a separate window for a helpful AI assistant named Remy (must input your own openai API key)
 
-Check out the sister project: https://github.com/V1236/VforC2 (outdated)
+Check out the sister project: https://github.com/V1236/VforC2 (outdated) & https://github.com/V1236/Remy-Red-Team-Assistant
 
 ## Installation
 ```
