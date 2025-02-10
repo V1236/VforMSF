@@ -1,9 +1,9 @@
 # VforMSF
 Enhance and automate metasploit console with VforMSF. This script acts an an add-on to enhance msfconsole by adding utilities, automations and additional modules writen in python.
 
-Assistant.py comes included. Run it in a separate window for a helpful AI assistant named Remy (must input your own openai API key)
+Assistant.py comes included. Run it in a separate window for a helpful AI assistant named Remy (must input your own openai API key) https://github.com/V1236/Remy-Red-Team-Assistant
 
-Check out the sister project: https://github.com/V1236/VforC2 (outdated) & https://github.com/V1236/Remy-Red-Team-Assistant
+Check out the sister project: https://github.com/V1236/VforC2 (outdated)
 
 ## Installation
 ```
